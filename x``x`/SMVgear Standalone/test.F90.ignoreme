@@ -1,0 +1,14 @@
+logical :: isDaytimeInFirstCell, isDaytime, dayAndNight
+
+real*8, parameter :: PHOTOLYSIS_THRESHOLD = 1.0d-80
+
+isDaytimeInFirstCell = (prate(1,1) >= PHOTOLYSIS_THRESHOLD)
+
+dayAndNight = .false. ! unless ...
+do jloop = 2, ntlopncs(ncs)
+   isDaytime = (prate(1,1) >= PHOTOLYSIS_THRESHOLD)
+   if (isDaytime .neqv. isDaytimeInFirstCell) then
+      dayAndNight = .true.
+      exit
+   end if
+end do

@@ -15,8 +15,6 @@
 !   Smvgear
 !   Backsub
 !   Decomp
-!   Pderiv
-!   Subfun
 !   Update
 !
 !=============================================================================
@@ -116,7 +114,7 @@
 !   nfdl2    : nfdh3 + 1
 !   nfdrep   : nfdh3 + # of rxns with two active reactants that are not
 !              followed by a rxn with the same reactants
-!   nfdrep1  : nfdrep + 1
+!   nfdrep1  : nfdrep + 1 ! MRD: No longer needed. Remove it.
 !   fracdec  : fraction time step is decreased in Smvgear if convergence
 !              test fails
 !   hmaxnit  : max time step for night all chem (s)
@@ -139,7 +137,7 @@
 !   errmx2   : tbd
 !   cc2      : array holding values of decomposed matrix
 !   cnew     : stores conc (y (estimated)) (molec/cm^3)
-!   gloss    : value of first derivatives on output from Subfun; right-side
+!   gloss    : value of first derivatives on output from velocity; right-side
 !              of eqn on input to Backsub; error term (solution from Backsub)
 !              on output from Backsub
 !   vdiag    : 1 / current diagonal term of the decomposed matrix
@@ -162,6 +160,9 @@
      &   num_qjo, num_qks, num_qjs, num_active)
 
       use GmiPrintError_mod, only : GmiPrintError
+      use GmiMechanism_mod
+      use GmiSparseMatrix_mod
+
 
       implicit none
 
@@ -235,15 +236,15 @@
 !                 order; it must be at least kstep = nqq+1 before doubling is
 !                 allowed
 !
-!     ifail     : # of times corrector failed to converge while the Jacobian
-!                 was old
-!     lfail     : # of times accumulated error test failed
-!     nfail     : # of times correcter failed to converge after Pderiv was
+!     numFailOldJacobian     : # of times corrector failed to converge while the Jacobian
+!                                was old
+!     numFailErrorTest     : # of times accumulated error test failed
+!     numFailAfterPredict     : # of times correcter failed to converge after Pderiv was
 !                 called
 !
 !     ifsuccess : identifies whether step is successful (=1) or not (=0)
-!     ischan    : # of first-order eqns to solve, = # of spc = order of
-!                 original matrix; ischan has a different value for day and
+!     num1stOEqnsSolve    : # of first-order eqns to solve, = # of spc = order of
+!                 original matrix; num1stOEqnsSolve has a different value for day and
 !                 night and for gas- and aqueous-phase chemistry;
 !                 # spc with prod or loss terms in Smvgear (?)
 !     jeval     :  1 => call Pderiv the next time through the corrector steps;
@@ -254,22 +255,22 @@
 !                 excessive failures
 !     kstep     : nqq + 1
 !
-!     npderiv   : total # of times Pderiv is called
-!     nsubfun   : total # of times Subfun is called
+!     numCallsPredict   : total # of times predictor is called
+!     numCallsVelocity   : total # of times velocity is called
 !
-!     nqqisc    : nqq * ischan
+!     nqqisc    : nqq * num1stOEqnsSolve
 !     nqqold    : value of nqq during last time step
 !     nqq       : order of integration method; varies between 1 and MAXORD
 !     nslp      : last time step # during which Pderiv was called
-!     nsteps    : total # of successful time steps taken
+!     numSuccessTdt    : total # of successful time steps taken
 !     ------------------------------------------------------------------------
 
       integer :: i, j, k
       integer :: i1, i2
       integer :: idoub
-      integer :: ifail, jfail, lfail, nfail
+      integer :: numFailOldJacobian, jfail, numFailErrorTest, numFailAfterPredict
       integer :: ifsuccess
-      integer :: ischan, ischan1
+      integer :: num1stOEqnsSolve
       integer :: jb
       integer :: jeval
       integer :: jg1
@@ -284,12 +285,12 @@
       integer :: nact
       integer :: ncsp  ! ncs       => for daytime   gas chemistry
                        ! ncs + ICS => for nighttime gas chemistry
-      integer :: npderiv, nsubfun
+      integer :: numCallsPredict, numCallsVelocity
       integer :: nqisc, nqqisc, nqqold
       integer :: nqq
       integer :: nslp
-      integer :: nsteps
-      integer :: nylowdec
+      integer :: numSuccessTdt
+      integer :: numErrTolDecreases
 
       integer :: ibcb(IGAS)
 
@@ -307,11 +308,11 @@
 !     edwn      : pertst^2*order for one order lower  than current order
 !     enqq      : pertst^2*order for current order
 !     eup       : pertst^2*order for one order higher than current order
-!     hmax      : max time step at a given time (s)
+!     maxTimeStep      : max time step at a given time (s)
 !     hratio    : relative change in delt*aset(1) each change in step or order
-!                 when Abs(hratio-1) > hrmax, reset jeval = 1 to call Pderiv
-!     hrmax     : max relative change in delt*aset(1) before Pderiv is called
-!     order     : floating point value of ischan, the order of # of ODEs
+!                 when Abs(hratio-1) > MAX_REL_CHANGE, reset jeval = 1 to call Pderiv
+!     MAX_REL_CHANGE     : max relative change in delt*aset(1) before Pderiv is called
+!     order     : floating point value of num1stOEqnsSolve, the order of # of ODEs
 !     rdelmax   : max factor by which delt can be increased in a single step;
 !                 as in Lsodes, set it to 1d4 initially to compensate for the
 !                 small initial delt, but then set it to 10 after successful
@@ -324,10 +325,10 @@
 !     rmsrat    : ratio of current to previous rms scaled error; if this
 !                 ratio decreases, then convergence is occuring
 !     timremain : remaining time in an chem interval (s)
-!     tinterval : total chem time interval; same as chemintv (s)
+!     chemTimeInterval : total chem time interval; same as chemintv (s)
 !     told      : stores last value of xelaps in case current step fails
 !     xelaps    : elapsed time in chem interval (s)
-!     yfac      : = 1 originially, but is decreased if excessive failures
+!     failureFraction      : = 1 originially, but is decreased if excessive failures
 !                 occur in order to reduce absolute error tolerance
 !     ------------------------------------------------------------------------
 
@@ -343,9 +344,9 @@
       real*8  :: drate
       real*8  :: dtasn1
       real*8  :: edwn, enqq, eup
-      real*8  :: errinit, errinit_inv
+      real*8  :: initialError, initialError_inv
       real*8  :: errmax_ncs_inv, errymax
-      real*8  :: hmax, hrmax
+      real*8  :: maxTimeStep
       real*8  :: hmtim
       real*8  :: hratio
       real*8  :: iabove
@@ -354,11 +355,13 @@
       real*8  :: rdeltdn, rdeltsm, rdeltup
       real*8  :: real_kstep
       real*8  :: reltol1, reltol2, reltol3
-      real*8  :: rmserr, rmserrp, rmsrat, rmstop
-      real*8  :: timremain, tinterval
+      real*8  :: rmsError, rmsErrorPrevious, rmsrat, rmstop
+      real*8  :: timremain, chemTimeInterval
       real*8  :: told
       real*8  :: xelaps, xtimestep
-      real*8  :: yfac
+      real*8  :: failureFraction
+
+      real*8, parameter  :: MAX_REL_CHANGE = 0.3d0
 
 !     -------------------------------------------------------------------------
 !     dely   : tbd
@@ -367,11 +370,11 @@
 !     cest   : stores value of dtlos when idoub = 1
 !     chold  : 1 / (reltol * cnew + abtol); multiply chold by local errors in
 !              different error tests
-!     dtlos  : an array of length ischan, used for the accumulated corrections;
+!     dtlos  : an array of length num1stOEqnsSolve, used for the accumulated corrections;
 !              on a successful return; dtlos(kloop,i) contains the estimated
 !              one step local error in cnew
 !     explic : tbd
-!     conc   : an array of length ischan*(MAXORD+1) that carries the
+!     conc   : an array of length num1stOEqnsSolve*(MAXORD+1) that carries the
 !              derivatives of cnew, scaled by delt^j/factorial(j), where j is
 !              the jth derivative; j varies from 1 to nqq; e.g., conc(jspc,2)
 !              stores delt*y' (estimated)
@@ -387,74 +390,93 @@
 
       real*8  :: conc  (KBLOOP, MXGSAER*7)
 
+      type (Mechanism_type) :: mechanismObject
+      integer :: nondiag     ! # of final matrix positions, excluding diagonal
 
+      mechanismObject%numGridCellsInBlock = ktloop
+      mechanismObject%speciesNumberA = irma
+      mechanismObject%speciesNumberB = irmb
+      mechanismObject%speciesNumberC = irmc
+      mechanismObject%numRxns2 = nfdh2
+      mechanismObject%numRxns3 = nfdh3
+      mechanismObject%numRxns3Drep = nfdrep
+
+! routine start initializeGear
 !     ----------------
 !     Begin execution.
 !     ----------------
 
-!c    Write (6,*) 'Smvgear called.'
+!    Write (6,*) 'Smvgear called.'
 
-      nact = nnact
+      nact = nnact ! MRD: why is this here? removing it affects results!
 
 !     =======================
 #     include "setkin_ibcb.h"
 !     =======================
 
-      ifail     = 0
+      !MRD: local variables initializations
+      print*, "initializing things"
+      numFailOldJacobian     = 0
       jfail     = 0
-      lfail     = 0
-      nfail     = 0
-      npderiv   = 0
-      nsteps    = 0
-      nsubfun   = 0
-      nylowdec  = 0
+      numFailErrorTest     = 0
+      numFailAfterPredict     = 0
+      numCallsPredict   = 0
+      numSuccessTdt    = 0
+      numCallsVelocity   = 0
+      numErrTolDecreases  = 0
 
-      hrmax     = 0.3d0
-      rmserr    = 1.0d0
+      ! MRD: local variables
+      ! MAX_REL_CHANGE moved to parameter above
+      rmsError    = 1.0d0
 
-      ischan    = ischang(ncs)
-      ischan1   = ischan - 1
-      order     = ischan
-      order_inv = 1.0d0 / ischan
+      ! MRD: derived from common block
+      num1stOEqnsSolve    = ischang(ncs)
+      order     = num1stOEqnsSolve
+      order_inv = 1.0d0 / num1stOEqnsSolve
 
-      tinterval = timeintv(ncs)
+      ! MRD: derived from common bloc
+      chemTimeInterval = timeintv(ncs)
 
+      ! ifsun is an argument to Smvgear
+      ! ncs is argument to Smvgear
+      ! ICS is from common block
       ncsp      = (ifsun - 1) * ICS + ncs
 
-      if (ifsun == 1) then
-        hmax = hmaxday(ncs)
-      else
-        hmax = hmaxnit
-      end if
+      maxTimeStep = hmaxnit
+      if (ifsun == 1) maxTimeStep = hmaxday(ncs)
 
-
-      yfac   = 1.0d0
+      failureFraction   = 1.0d0
       iabove = order * 0.4d0
 
-      errinit     = Min (errmax(ncs), 1.0d-03)
-      errinit_inv = 1.0d0 / errinit
+      initialError     = Min (errmax(ncs), 1.0d-03)
+      initialError_inv = 1.0d0 / initialError
 
       errmax_ncs_inv = 1.0d0 / errmax(ncs)
+! routine end initializeGear
 
 
-!     ----------------------------------------------------
-!     Start time interval or re-enter after total failure.
-!     ----------------------------------------------------
-
+! routine start startTimeInterval must call: restartTimeInterval,
+   !calcInitialTimeStepSize, updateLimitTighten, and itself (if/else)
+! 100 calls 150
 !     ========
  100  continue
 !     ========
+!     ----------------------------------------------------
+!     Start time interval or re-enter after total failure.
+!     ----------------------------------------------------
+      print*, "in 100"
+
 
       idoub     = 2
       nslp      = MBETWEEN
       jrestar   = 0
       xelaps    = 0.0d0
       told      = 0.0d0
-      timremain = tinterval
+      timremain = chemTimeInterval
 
-      reltol1   = yfac * errinit_inv
+      reltol1   = failureFraction * initialError_inv
 
-      reltol2   = yfac * errmax_ncs_inv
+      reltol2   = failureFraction * errmax_ncs_inv
 
       reltol3   = errmax_ncs_inv
 
@@ -464,19 +486,27 @@
 !     Initialize concentration array.
 !     -------------------------------
 
-      do jnew = 1, ischan
+      do jnew = 1, num1stOEqnsSolve
         do kloop = 1, ktloop
           cnew(kloop, jnew) = corig(kloop, jnew)
         end do
       end do
 
+      ! then call 150
+! routine end startTimeInterval
+
+
+! routine start restartTimeInterval
 !     --------------------------------------------------------------------
 !     Re-enter here if total failure or if restarting with new cell block.
 !     --------------------------------------------------------------------
-
+! 150 resets some stuff, then calls update
 !     ========
  150  continue
 !     ========
+
+      print*, "in 150"
+
 
       hratio    = 0.0d0
       asn1      = 1.0d0
@@ -488,6 +518,13 @@
 !     ---------------------
 
 !DIR$ INLINE
+! MRD: Update will be moved outside the solver
+! It will exist in the GMI driver
+! Some GMI chem wrapper will initalize this, and then called the solver
+! Move this routine into the mechanism
+
+print*, "Calling update"
+
 !     ===========
       call Update  &
 !     ===========
@@ -495,23 +532,25 @@
 !DIR$ NOINLINE
 
 
-!     ----------------------------
-!     Initialize first derivative.
-!     ----------------------------
+      mechanismObject%rateConstants = rrate
+      mechanismObject%numActiveReactants = nallr
 
-!     ===========
-      call Subfun  &
-!     ===========
-     &  (ischan, ktloop, nallr, ncsp, nfdh2, nfdh3, nfdl1, nfdl2,  &
-     &   nfdrep, nfdrep1, irma, irmb, irmc, cnew, rrate, nsubfun,  &
-     &   gloss, trate, nfdh1)
+   print*, "calling velocity"
+      call velocity (mechanismObject, num1stOEqnsSolve, ncsp, cnew, gloss, trate, nfdh1)
+
+      numCallsVelocity = numCallsVelocity + 1
+
+      ! MRD: can this be removed?
+      mechanismObject%rateConstants = rrate
 
 
 !     ----------------------------------------------------------------
 !     Zero first derviatives in surface zones for species with fixed
 !     concentration boundary conditions (LLNL addition, PSC, 5/14/99).
 !     ----------------------------------------------------------------
-
+! MRD: these go into a combo of mechanism and sparse matrix
+! but probably in mechanism
+print*, " Zero first derviatives"
       do kloop = 1, ktloop
 
         if (jreorder(jlooplo+kloop) <= (ilat*ilong)) then
@@ -534,6 +573,7 @@
 
       end do
 
+! MRD: Take the reordering and error/tolerance calculations and keep them in the solver for now
 !     -------------------------------------------
 !     Determine initial absolute error tolerance.
 !     -------------------------------------------
@@ -542,7 +582,7 @@
         dely(kloop) = 0.0d0
       end do
 
-
+   print*, "determining if ireordif: ", ireord
 !     ==========================
       IREORDIF: if (ireord /= 1) then
 !     ==========================
@@ -553,7 +593,7 @@
           end do
         end do
 
-        do jspc = 1, ischan
+        do jspc = 1, num1stOEqnsSolve
           do kloop = 1, ktloop
 
             cnw = cnew(kloop,jspc)
@@ -582,10 +622,10 @@
           k5 = kgrp(kloop,5) + k4
 
           if (k1 > iabove) then
-            yabst(kloop) = abtol(1,ncs)
-          else if (k2 > iabove) then
-            yabst(kloop) = abtol(2,ncs)
-          else if (k3 > iabove) then
+            yabst(kloop) = abtol(1,ncs) ! MRD: these yabst should be passed in
+          else if (k2 > iabove) then    ! does the driver pass them in?
+            yabst(kloop) = abtol(2,ncs) ! or does the mechanism specify them
+          else if (k3 > iabove) then    ! tabled for now
             yabst(kloop) = abtol(3,ncs)
           else if (k4 > iabove) then
             yabst(kloop) = abtol(4,ncs)
@@ -599,27 +639,30 @@
 
 !c
         do kloop = 1, ktloop
-          do jspc = 1, ischan
+          do jspc = 1, num1stOEqnsSolve
             cnewylow    = cnew (kloop,jspc) + (yabst(kloop) * reltol1)
             errymax     = gloss(kloop,jspc) / cnewylow
-            dely(kloop) = dely (kloop) + (errymax * errymax)
+            dely(kloop) = dely (kloop) + (errymax * errymax) ! this is an error (not a tolerance)
           end do
         end do
+
 
 !     ====
       else
 !     ====
-
+   print*, "I am in else because ireord is not equal to 1", ireord
 !       ------------------------------------------------------
 !       Use lowest absolute error tolerance when reordering.
 !       If reordering, set errmx2 then return to Physproc.
 !
-!       abtoler1 = yfac * abtol(6,ncs) / Min (errmax, 1.0d-03)
+!       abtoler1 = failureFraction * abtol(6,ncs) / Min (errmax, 1.0d-03)
 !       ------------------------------------------------------
-
+! MRD: it is conceviable that there could be different norms
+! MRD: or error criteria
+! MRD: this is part of the management system
 !c
         do kloop = 1, ktloop
-          do jspc = 1, ischan
+          do jspc = 1, num1stOEqnsSolve
             errymax     = gloss(kloop,jspc) /  &
      &                    (cnew(kloop,jspc) + abtoler1)
             dely(kloop) = dely(kloop) + (errymax * errymax)
@@ -629,24 +672,34 @@
         do kloop = 1, ktloop
           errmx2(jlooplo+kloop) = dely(kloop)
         end do
+   print*, "leaving smvgear"
+        return
 
-!       =========
-        go to 700
-!       =========
+
 
 !     ===============
       end if IREORDIF
 !     ===============
 
+! routine end restartTimeInterval
 
+
+
+
+! routine start calcInitialTimeStepSize
 !     --------------------------------------
 !     Calculate initial time step size (s).
 !
-!     Sqrt (dely / [errinit * order]) =
-!       rmsnorm of error scaled to errinit *
+!     Sqrt (dely / [initialError * order]) =
+!       rmsnorm of error scaled to initialError *
 !       cnew + abtol / reltol
 !     --------------------------------------
+! MRD: leave in solver
+! MRD: adaptivity manager (time step and order)
+! MRD: this is a guess, later it will adapt
+! MRD: client will call this
 
+   print*, "doing time step stuff"
       rmstop = 0.0d0
 
       do kloop = 1, ktloop
@@ -655,8 +708,8 @@
         end if
       end do
 
-      delt1 = Sqrt (errinit / (abst2(ncs) + (rmstop * order_inv)))
-      delt  = Max  (Min (delt1, timremain, hmax), HMIN)
+      delt1 = Sqrt (initialError / (abst2(ncs) + (rmstop * order_inv)))
+      delt  = Max  (Min (delt1, timremain, maxTimeStep), HMIN)
 
 
 !     -----------------------
@@ -673,9 +726,9 @@
 !     Store initial concentration and first derivatives x time step.
 !     --------------------------------------------------------------
 
-      do jspc = 1, ischan
+      do jspc = 1, num1stOEqnsSolve
 
-        j = jspc + ischan
+        j = jspc + num1stOEqnsSolve
 
         do kloop = 1, ktloop
           conc(kloop,jspc) = cnew(kloop,jspc)
@@ -683,18 +736,24 @@
         end do
 
       end do
+! routine start calcInitialTimeStepSize
 
 
+! routine start updateLimitTighten
 !     ========
  200  continue
 !     ========
 
+print*, "in continue 200"
+
 
 !     -------------------------------------------------------------------
-!     Update coefficients of the order; note that pertst2 is the original
+!     Update coefficients of (for?) the order; note that pertst2 is the original
 !     pertst^2.
 !     -------------------------------------------------------------------
-
+! MRD: Gear can be 1st, 2nd, etc. order
+! MRD: this could be where it changes it order
+! MRD: track these down, figure out what they are
       if (nqq /= nqqold) then
 
         nqqold = nqq
@@ -707,25 +766,25 @@
         conp3  = 1.4d0 /  (eup**enqq3(nqq))
         conp2  = 1.2d0 / (enqq**enqq2(nqq))
         conp1  = 1.3d0 / (edwn**enqq1(nqq))
-        nqqisc = nqq * ischan
+        nqqisc = nqq * num1stOEqnsSolve
 
       end if
 
-
+! MRD: Below should go into adaptivity manager
 !     ----------------------------------------------------------------
 !     Limit size of rdelt, then recalculate new time step and update
-!     hratio.  Use hratio to determine whether Pderiv should be called
-!     again.
+!     hratio.  Use hratio to determine whether or not the predictor
+!     should be updated. (edit by MRD on 2/27/2013)
 !     ----------------------------------------------------------------
 
-      hmtim  = Min (hmax, timremain)
+      hmtim  = Min (maxTimeStep, timremain)
       rdelt  = Min (rdelt, rdelmax, hmtim/delt)
       delt   = delt   * rdelt
       hratio = hratio * rdelt
       xelaps = xelaps + delt
 
-      if ((Abs (hratio-1.0d0) > hrmax) .or. (nsteps >= nslp)) then
-        jeval = 1
+      if ((Abs (hratio-1.0d0) > MAX_REL_CHANGE) .or. (numSuccessTdt >= nslp)) then
+        jeval = 1 ! MRD: could be a boolean; this is signifying to whether or not to update Jacobian
       end if
 
 
@@ -733,45 +792,49 @@
 !     If time step < HMIN, tighten absoloute error tolerance and
 !     restart integration at beginning of time interval.
 !     ----------------------------------------------------------
-
+   print*, "tightning absolute error tolerance"
       if (delt < HMIN) then
 
         if (pr_smv2) then
-          Write (lunsmv,950) delt, timremain, yfac, errmax(ncs)
+          Write (lunsmv,950) delt, timremain, failureFraction, errmax(ncs)
         end if
 
  950    format ('Smvgear:  delt      = ', 1pe9.3, /,  &
      &          '          timremain = ', 1pe9.3, /,  &
-     &          '          yfac      = ', 1pe9.3, /,  &
+     &          '          failureFraction      = ', 1pe9.3, /,  &
      &          '          errmax    = ', 1pe9.3)
 
-        nylowdec = nylowdec + 1
-        yfac     = yfac * 0.01d0
+        numErrTolDecreases = numErrTolDecreases + 1
+        failureFraction     = failureFraction * 0.01d0
 
-        if (nylowdec == 10) then
+        if (numErrTolDecreases == 10) then
 
           if (pr_smv2) then
             Write (lunsmv,960)
           end if
 
- 960      format ('Smvgear:  too many decreases of yfac.')
+ 960      format ('Smvgear:  too many decreases of failureFraction.')
 
         call GmiPrintError ('Problem in Smvgear', .true., 0, 0, 0, 0, 0.0d0, 0.0d0)
 
         end if
 
+
 !       =========
-        go to 100
+        go to 100 ! routine start startTimeInterval
 !       =========
 
       end if
 
+    ! routine end updateLimitTighten
 
+
+! routine start scalingDerivatives
 !     -------------------------------------------------------------------
 !     If the delt is different than during the last step (if rdelt /= 1),
 !     then scale the derivatives.
 !     -------------------------------------------------------------------
-
+   print*, "scaling derivatives"
       if (rdelt /= 1.0d0) then
 
         rdelta = 1.0d0
@@ -780,9 +843,9 @@
         do j = 2, kstep
 
           rdelta = rdelta * rdelt
-          i1     = i1 + ischan
+          i1     = i1 + num1stOEqnsSolve
 
-          do i = i1, i1 + ischan1
+          do i = i1, i1 + (num1stOEqnsSolve-1)
             do kloop = 1, ktloop
               conc(kloop,i) = conc(kloop,i) * rdelta
             end do
@@ -792,12 +855,17 @@
 
       end if
 
+! routine end scalingDerivatives
+
+
+
+! routine start resetDelMaxUpdateWithCnew
 
 !     --------------------------------------------------------------
 !     If the last step was successful, reset rdelmax = 10 and update
 !     the chold array with current values of cnew.
 !     --------------------------------------------------------------
-
+   print*, "last time step was successful"
 !     ================================
       IFSUCCESSIF: if (ifsuccess == 1) then
 !     ================================
@@ -808,7 +876,7 @@
 !       Determine new absolute error tolerance.
 !       ---------------------------------------
 
-        if (Mod (nsteps, 3) == 2) then
+        if (Mod (numSuccessTdt, 3) == 2) then
 
           do k = 1, 5
             do kloop = 1, ktloop
@@ -816,7 +884,7 @@
             end do
           end do
 
-          do jspc = 1, ischan
+          do jspc = 1, num1stOEqnsSolve
             do kloop = 1, ktloop
 
               cnw = cnew(kloop,jspc)
@@ -864,7 +932,7 @@
 
 !c
         do kloop = 1, ktloop
-          do jspc = 1, ischan
+          do jspc = 1, num1stOEqnsSolve
 
             chold(kloop,jspc) =  &
      &        reltol3 /  &
@@ -878,21 +946,24 @@
       end if IFSUCCESSIF
 !     ==================
 
+! routine end resetDelMaxUpdateWithCnew
 
+
+   ! routine start computePredictConcPascal
 !     ------------------------------------------------------------------
 !     Compute the predicted concentration and derivatives by multiplying
 !     previous values by the pascal triangle matrix.
 !     ------------------------------------------------------------------
-
+   print*, "computing predicted conc and derivatives using pascal triangle matrix"
       i1 = nqqisc + 1
 
       do jb = 1, nqq - 1
 
-        i1 = i1 - ischan
+        i1 = i1 - num1stOEqnsSolve
 
         do i = i1,  nqqisc
 
-          j = i + ischan
+          j = i + num1stOEqnsSolve
 
           do kloop = 1, ktloop
             conc(kloop,i)  = conc(kloop,i) + conc(kloop,j)
@@ -902,9 +973,9 @@
 
       end do
 
-      do jspc = 1,  ischan
+      do jspc = 1,  num1stOEqnsSolve
 
-        j = jspc + ischan
+        j = jspc + num1stOEqnsSolve
 
         do kloop = 1, ktloop
           conc  (kloop,jspc) = conc(kloop,jspc) + conc(kloop,j)
@@ -913,9 +984,9 @@
 
       end do
 
-      do i = ischan + 1, nqqisc
+      do i = num1stOEqnsSolve + 1, nqqisc
 
-        j = i + ischan
+        j = i + num1stOEqnsSolve
 
         do kloop = 1, ktloop
           conc(kloop,i) = conc(kloop,i) + conc(kloop,j)
@@ -923,6 +994,13 @@
 
       end do
 
+   ! routine end computePredictConcPascal
+!     ---------------------------------------
+
+
+
+   ! routine start correctionLoop
+!     ---------------------------------------
 
 !     -------------------------------------------------------------------
 !     Correction loop.
@@ -937,19 +1015,23 @@
 
 
 !     ========
- 250  continue
+ 250  continue ! correctionLoop
 !     ========
-
+   print*, "in 250 or correction loops"
 
       l3 = 0
 
-      do jspc = 1, ischan
+      do jspc = 1, num1stOEqnsSolve
         do kloop = 1, ktloop
           cnew (kloop,jspc) = conc(kloop,jspc)
           dtlos(kloop,jspc) = 0.0d0
         end do
       end do
+   ! routine stop correctionLoop
 
+
+   ! routine start reEvalPredictor
+!     ---------------------------------------
 
 !     ------------------------------------------------------------------
 !     If jeval = 1, re-evaluate predictor matrix P = I - H * aset(1) * J
@@ -959,31 +1041,50 @@
 !     ------------------------------------------------------------------
 
       if (jeval == 1) then
-
+         print*, "re-evalulate predictor matrix"
         r1delt = -asn1 * delt
 
-!DIR$   INLINE
-!       ===========
-        call Pderiv  &
-!       ===========
-     &    (ischan, ktloop, ncsp, nfdh2, nfdh3, nfdl1, nfdl2, irma, irmb,  &
-     &     irmc, r1delt, cnew, rrate, npderiv, cc2, urate, nfdh1)
-!DIR$   NOINLINE
+         ! MRD: The below functionality has replaced the subroutine Pderiv
+         !       ===========
+         !        call Pderiv  &
+         !       ===========
+         !         (mechanismObject, num1stOEqnsSolve, ncsp, nfdh2, nfdh3, nfdl1, nfdl2, irma, irmb,  &
+         !     &   irmc, r1delt, cnew, rrate, npderiv, cc2, urate, nfdh1)
+
+
+         nondiag  = iarray(ncsp) - num1stOEqnsSolve ! iarray is in common block
+         mechanismObject%numRxns1 = nfdh2 + ioner(ncsp)
+
+         call calculateTermOfJacobian (mechanismObject, cnew, urate)
+
+         numCallsPredict  = numCallsPredict + 1
+         ! MRD: iarray, npdhi, and npdlo are in common blocks
+         call calculatePredictor (nondiag, iarray(ncsp), mechanismObject%numGridCellsInBlock, &
+            &  npdhi(ncsp), npdlo(ncsp), r1delt, urate, cc2)
+
+      ! MRD: End block of code that was in Pderiv
 
 !DIR$   INLINE
 !       ===========
         call Decomp  &
 !       ===========
-     &    (ischan, ktloop, ncsp, cc2, vdiag)
+     &    (num1stOEqnsSolve, ktloop, ncsp, cc2, vdiag)
 !DIR$   NOINLINE
 
         jeval  = -1
         hratio = 1.0d0
-        nslp   = nsteps + MBETWEEN
+        nslp   = numSuccessTdt + MBETWEEN
         drate  = 0.7d0
 
       end if
 
+   ! routine end reEvalPredictor
+!     ---------------------------------------
+
+
+
+   ! routine start evalFirstDerivative
+!     ---------------------------------------
 
 !     -------------------------------------------------------------
 !     Evaluate the first derivative using corrected values of cnew.
@@ -993,13 +1094,10 @@
  300  continue
 !     ========
 
-!     ===========
-      call Subfun  &
-!     ===========
-     &  (ischan, ktloop, nallr, ncsp, nfdh2, nfdh3, nfdl1, nfdl2,  &
-     &   nfdrep, nfdrep1, irma, irmb, irmc, cnew, rrate, nsubfun,  &
-     &   gloss, trate, nfdh1)
+   print*, "in 300, evaluating first derivative"
 
+     call velocity (mechanismObject, num1stOEqnsSolve, ncsp, cnew, gloss, trate, nfdh1)
+     numCallsVelocity = numCallsVelocity + 1
 
 !     ----------------------------------------------------------------
 !     Zero first derviatives in surface zones for species with fixed
@@ -1042,9 +1140,9 @@
 !     corrected calculation of the first derivative.
 !     ---------------------------------------------------------------
 
-      do jspc = 1, ischan
+      do jspc = 1, num1stOEqnsSolve
 
-        j = jspc + ischan
+        j = jspc + num1stOEqnsSolve
 
         do kloop = 1, ktloop
           gloss(kloop,jspc) = (delt * gloss(kloop,jspc)) -  &
@@ -1054,30 +1152,36 @@
       end do
 
 
+   ! routine end evalFirstDerivative
+!     ---------------------------------------
+
 !     --------------------------------------------------------------
 !     Solve the linear system of equations with the corrector error;
 !     Backsub solves backsubstitution over matrix of partial derivs.
 !     --------------------------------------------------------------
-
+   print*, "solve system of equations"
 !     ============
       call Backsub  &
 !     ============
-     &  (ischan, ktloop, ncsp, cc2, vdiag, gloss)
+     &  (num1stOEqnsSolve, ktloop, ncsp, cc2, vdiag, gloss)
 
 
+
+   ! routine start sumAccumError
+!     ---------------------------------------
 !     ----------------------------------------------------------------
 !     Sum up the accumulated error, correct the concentration with the
 !     error, and begin to calculate the rmsnorm of the error relative
 !     to chold.
 !     ----------------------------------------------------------------
-
+      print*, "summing up aculated error"
       do kloop = 1, ktloop
         dely(kloop) = 0.0d0
       end do
 
       if (asn1 == 1.0d0) then
 
-        do i = 1, ischan
+        do i = 1, num1stOEqnsSolve
           do kloop = 1, ktloop
 
             dtlos(kloop,i) = dtlos(kloop,i) + gloss(kloop,i)
@@ -1090,7 +1194,7 @@
 
       else
 
-        do i = 1, ischan
+        do i = 1, num1stOEqnsSolve
           do kloop = 1, ktloop
 
             dtlos(kloop,i) = dtlos(kloop,i) + gloss(kloop,i)
@@ -1104,17 +1208,24 @@
       end if
 
 
+   ! routine end sumAccumError
+!     ---------------------------------------
+
+
+   ! routine start calculateRmsError
+!     ---------------------------------------
+
 !     ------------------------------------------------------------------
 !     Set the previous rms error and calculate the new rms error.
 !     If dcon < 1, then sufficient convergence has occurred.  Otherwise,
-!     if the ratio of the current to previous rmserr is decreasing,
+!     if the ratio of the current to previous rmsError is decreasing,
 !     iterate more.  If it is not, then the convergence test failed.
 !     ------------------------------------------------------------------
 
-      rmserrp = rmserr
+      rmsErrorPrevious = rmsError
       der2max = 0.0d0
 
-
+      print*, "calculating new rms error"
       do kloop = 1, ktloop
 
         if (dely(kloop) > der2max) then
@@ -1124,19 +1235,27 @@
       end do
 
 
-      rmserr = Sqrt (der2max * order_inv)
+      rmsError = Sqrt (der2max * order_inv)
 
 
       l3 = l3 + 1
 
       if (l3 > 1) then
-        rmsrat = rmserr / rmserrp
+        rmsrat = rmsError / rmsErrorPrevious
         drate  = Max (0.2d0*drate, rmsrat)
       else
         rmsrat = 1.0d0
       end if
 
-      dcon = rmserr * Min (conpst(nqq), conp15(nqq)*drate)
+      dcon = rmsError * Min (conpst(nqq), conp15(nqq)*drate)
+
+
+   ! routine end calculateRmsError
+!     ---------------------------------------
+
+
+   ! routine start checkAccumulatedError
+!     ---------------------------------------
 
 
 !     --------------------------------------------------------
@@ -1144,16 +1263,17 @@
 !     --------------------------------------------------------
 
       if (dcon > 1.0d0) then
-
+      print*, "convergence"
 !       -------------------------------------------------------------------
 !       If nonconvergence after one step, re-evaluate first derivative with
 !       new values of cnew.
 !       -------------------------------------------------------------------
 
         if (l3 == 1) then
+        print*, "re evaulate first deriviatives"
 
 !         =========
-          go to 300
+          go to 300 !evalFirstDerivative
 !         =========
 
 !         ----------------------------------------------------------------
@@ -1167,17 +1287,20 @@
 !         ----------------------------------------------------------------
 
         else if (jeval == 0) then
-
-          ifail = ifail + 1
+         print*, "conversion failure"
+          numFailOldJacobian = numFailOldJacobian + 1
           jeval = 1
 
 !         =========
-          go to 250
+          go to  250 ! correctionLoop
 !         =========
 
         end if
 
-        nfail     = nfail + 1
+           ! routine stop checkAccumulatedError
+!     ---------------------------------------
+
+        numFailAfterPredict     = numFailAfterPredict + 1
         rdelmax   = 2.0d0
         jeval     = 1
         ifsuccess = 0
@@ -1188,11 +1311,11 @@
 
         do jb = 1, nqq
 
-          i1 = i1 - ischan
+          i1 = i1 - num1stOEqnsSolve
 
           do i = i1, nqqisc
 
-            j = i + ischan
+            j = i + num1stOEqnsSolve
 
             do kloop = 1, ktloop
               conc(kloop,i) = conc(kloop,i) - conc(kloop,j)
@@ -1203,12 +1326,17 @@
         end do
 
 !       =========
-        go to 200
+        go to 200 ! updateLimitTighten
 !       =========
 
       end if
 
 
+   ! routine end checkAccumulatedError
+!     ---------------------------------------
+
+
+          ! routine start correctorIterationConveraged
 !     -------------------------------------------------------------------
 !     The corrector iteration converged.
 !
@@ -1216,7 +1344,7 @@
 !     If all else goes well.  Next, test the accumulated error from the
 !     convergence process above.
 !     -------------------------------------------------------------------
-
+   print*, "corrector iteration converaged"
       jeval = 0
 
       if (l3 > 1) then
@@ -1227,7 +1355,7 @@
 
 !c
         do kloop = 1, ktloop
-          do jspc = 1, ischan
+          do jspc = 1, num1stOEqnsSolve
             errymax     = dtlos(kloop,jspc) * chold(kloop,jspc)
             dely(kloop) = dely(kloop) + errymax * errymax
           end do
@@ -1245,6 +1373,12 @@
 
       end if
 
+          ! routine end correctorIterationConveraged
+!     -------------------------------------------------------------------
+
+
+          ! routine start accumulatedErrorTestFailed
+!     -------------------------------------------------------------------
 
 !     ----------------------------------------------------------------
 !     The accumulated error test failed.
@@ -1263,19 +1397,19 @@
 !     ==============================
       DER2MAXIF: if (der2max > enqq) then
 !     ==============================
-
+      print*, "der2max > enqq"
         xelaps = told
-        lfail  = lfail + 1
+        numFailErrorTest  = numFailErrorTest + 1
         jfail  = jfail  + 1
         i1     = nqqisc + 1
 
         do jb = 1, nqq
 
-          i1 = i1 - ischan
+          i1 = i1 - num1stOEqnsSolve
 
           do i = i1, nqqisc
 
-            j = i + ischan
+            j = i + num1stOEqnsSolve
 
             do kloop = 1, ktloop
               conc(kloop,i) = conc(kloop,i) - conc(kloop,j)
@@ -1291,13 +1425,13 @@
 
           ifsuccess = 0
           rdeltup   = 0.0d0
-
+      print*, "jfail <= 6"
 !         =========
           go to 400
 !         =========
 
         else if (jfail <= 20) then
-
+      print*, "jfail <= 20"
           ifsuccess = 0
           rdelt     = fracdec
 
@@ -1313,7 +1447,7 @@
           jrestar = jrestar + 1
           idoub   = 5
 
-          do jspc = 1, ischan
+          do jspc = 1, num1stOEqnsSolve
             do kloop = 1, ktloop
               cnew(kloop,jspc) = conc(kloop,jspc)
             end do
@@ -1344,6 +1478,13 @@
 
         end if
 
+                  ! routine end accumulatedErrorTestFailed
+!     -------------------------------------------------------------------
+
+                          ! routine start successfulStep
+!     -------------------------------------------------------------------
+
+
 !     ====
       else
 !     ====
@@ -1352,10 +1493,10 @@
 !       All successful steps come through here.
 !
 !       After a successful step, update the concentration and all
-!       derivatives, reset told, set ifsuccess = 1, increment nsteps,
+!       derivatives, reset told, set ifsuccess = 1, increment numSuccessTdt,
 !       and reset jfail = 0.
 !       -------------------------------------------------------------
-
+   print*, "successful stepping"
 
         if (pr_qqjk .and. do_qqjk_inchem) then
           xtimestep = xelaps - told
@@ -1374,18 +1515,18 @@
 
         jfail     = 0
         ifsuccess = 1
-        nsteps    = nsteps + 1
+        numSuccessTdt    = numSuccessTdt + 1
         told      = xelaps
 
         i1 = 1
 
         do j = 2, kstep
 
-          i1 = i1 + ischan
+          i1 = i1 + num1stOEqnsSolve
 
           asnqqj = aset(nqq,j)
 
-          do jspc = 1, ischan
+          do jspc = 1, num1stOEqnsSolve
 
             i = jspc + i1 - 1
 
@@ -1398,13 +1539,20 @@
 
         end do
 
+                                  ! routine end successfulStep
+!     -------------------------------------------------------------------
+
+
+                          ! routine start updateChemistryMassBalance
+!     -------------------------------------------------------------------
 !       ------------------------------
 !       Update chemistry mass balance.
 !       ------------------------------
+print*, "update chemistry mass balance"
 
         if (asn1 == 1.0d0) then
 
-          do i = 1, ischan
+          do i = 1, num1stOEqnsSolve
             do kloop = 1, ktloop
 
               smvdm(kloop,i) =  &
@@ -1417,7 +1565,7 @@
 
         else
 
-          do i = 1, ischan
+          do i = 1, num1stOEqnsSolve
             do kloop = 1, ktloop
 
               dtasn1         = asn1 * dtlos(kloop,i)
@@ -1429,17 +1577,17 @@
 
         end if
 
+! routine end updateChemistryMassBalance
+!     -------------------------------------------------------------------
+
+
 !       ---------------------------------------------------
 !       Exit smvgear if a time interval has been completed.
 !       ---------------------------------------------------
 
-        timremain = tinterval - xelaps
-
-        if (timremain <= 1.0d-06) then
-!         =========
-          go to 700
-!         =========
-        end if
+        timremain = chemTimeInterval - xelaps
+   print*, "checking time interval"
+        if (timremain <= 1.0d-06) return
 
 !       -------------------------------------------------------------------
 !       idoub counts the number of successful steps before re-testing the
@@ -1452,14 +1600,16 @@
 !                       size and order;
 !         if idoub = 0, test the time step and order for a change.
 !       -------------------------------------------------------------------
-
+! routine start goToNextTimeStep
+!     -------------------------------------------------------------------
+!       ------------------------------
         if (idoub > 1) then
 
           idoub = idoub - 1
 
           if (idoub == 1) then
 
-            do jspc = 1, ischan, 2
+            do jspc = 1, num1stOEqnsSolve, 2
 
               jg1 = jspc + 1
 
@@ -1473,12 +1623,16 @@
           end if
 
           rdelt = 1.0d0
-
+         print*, "Going to 200"
 !         =========
           go to 200
 !         =========
 
         end if
+
+        ! routine end goToNextTimeStep
+!     -------------------------------------------------------------------
+!       ------------------------------
 
 !     ================
       end if DER2MAXIF
@@ -1502,14 +1656,16 @@
 !     the current order.  If nqq >= MAXORD, then we do not allow the
 !     order to increase.
 !     ---------------------------------------------------------------
-
+        ! routine start changeStepSizeAndOrderTest
+!     -------------------------------------------------------------------
+   print*, "testing whether or not to change time order"
       if (nqq < MAXORD) then
 
         do kloop = 1, ktloop
           dely(kloop) = 0.0d0
         end do
 
-        do jspc = 1, ischan
+        do jspc = 1, num1stOEqnsSolve
           do kloop = 1, ktloop
             errymax     = (dtlos(kloop,jspc) - cest(kloop,jspc)) *  &
      &                    chold(kloop,jspc)
@@ -1535,11 +1691,13 @@
 
       end if
 
+        ! routine start changeStepSizeAndOrderTest
+!     -------------------------------------------------------------------
 
 !     ========
  400  continue
 !     ========
-
+   print*, "in 400"
 
 !     ------------------------------------------------------------
 !     Estimate the time step ratio (rdeltsm) at the current order.
@@ -1553,6 +1711,8 @@
 !     Estimate the time step ratio (rdeltdn) at one order lower than
 !     the current order.  if nqq = 1, then we cannot test a lower order.
 !     ------------------------------------------------------------------
+        ! routine start estimateTimeStepRatioLowerOrder
+!     -------------------------------------------------------------------
 
       if (nqq > 1) then
 
@@ -1560,11 +1720,11 @@
           dely(kloop) = 0.0d0
         end do
 
-        kstepisc = (kstep - 1) * ischan
+        kstepisc = (kstep - 1) * num1stOEqnsSolve
 
 !c
         do kloop = 1, ktloop
-          do jspc = 1, ischan
+          do jspc = 1, num1stOEqnsSolve
 
             i = jspc + kstepisc
 
@@ -1597,6 +1757,10 @@
 !     -----------------------------------------------------------------
 
       rdelt = Max (rdeltup, rdeltsm, rdeltdn)
+
+      ! routine start estimateTimeStepRatioLowerOrder
+!     -------------------------------------------------------------------
+
 
 
 !     ---------------------------------------------------------------
@@ -1631,12 +1795,15 @@
 
       else if (rdelt == rdeltup) then
 
+! routine start increareOrderAddDerTerm
+!     -------------------------------------------------------------------
+
         real_kstep = kstep
         consmult   = aset(nqq,kstep) / real_kstep
         nqq        = kstep
-        nqisc      = nqq * ischan
+        nqisc      = nqq * num1stOEqnsSolve
 
-        do jspc = 1, ischan, 2
+        do jspc = 1, num1stOEqnsSolve, 2
 
           jg1 = jspc + 1
           i1  = jspc + nqisc
@@ -1648,6 +1815,9 @@
           end do
 
         end do
+
+! routine end increareOrderAddDerTerm
+!     -------------------------------------------------------------------
 
       end if
 
@@ -1663,14 +1833,14 @@
       go to 200
 !     =========
 
-!     ========
- 700  continue
-!     ========
-
-
       return
 
       end subroutine Smvgear
+
+
+      subroutine initializeGear ()
+
+      end subroutine initializeGear
 
 
 !-----------------------------------------------------------------------------
@@ -1704,8 +1874,8 @@
 !     Sum 1,2,3,4, or 5 terms at a time to improve vectorization.
 !
 ! ARGUMENTS
-!   ischan : # of first-order eqns to solve, = # of spc = order of original
-!            matrix; ischan has a different value for day and night, and for
+!   num1stOEqnsSolve : # of first-order eqns to solve, = # of spc = order of original
+!            matrix; num1stOEqnsSolve has a different value for day and night, and for
 !            gas- and aqueous-phase chemistry;
 !            # spc with prod or loss terms in Smvgear (?)
 !   ktloop : # of grid-cells in a grid-block
@@ -1718,7 +1888,7 @@
 !-----------------------------------------------------------------------------
 
       subroutine Backsub  &
-     &  (ischan, ktloop, ncsp, cc2, vdiag, gloss)
+     &  (num1stOEqnsSolve, ktloop, ncsp, cc2, vdiag, gloss)
 
       implicit none
 
@@ -1730,7 +1900,7 @@
 !     Argument declarations.
 !     ----------------------
 
-      integer, intent(in)  :: ischan
+      integer, intent(in)  :: num1stOEqnsSolve
       integer, intent(in)  :: ktloop
       integer, intent(in)  :: ncsp
       real*8,  intent(in)  :: cc2  (KBLOOP, 0:MXARRAY)
@@ -1912,7 +2082,7 @@
 !     ---------------------------------------------------------------
 
 !     ===========================
-      ILOOP: do i = ischan, 1, -1
+      ILOOP: do i = num1stOEqnsSolve, 1, -1
 !     ===========================
 
         mzt = imztot(i,ncsp)
@@ -2093,8 +2263,8 @@
 !   pivoting has little effect on results.
 !
 ! ARGUMENTS
-!   ischan : # of first-order eqns to solve, = # of spc = order of original
-!            matrix; ischan has a different value for day and night, and for
+!   num1stOEqnsSolve : # of first-order eqns to solve, = # of spc = order of original
+!            matrix; num1stOEqnsSolve has a different value for day and night, and for
 !            gas- and aqueous-phase chemistry;
 !            # spc with prod or loss terms in Smvgear (?)
 !   ktloop : # of grid-cells in a grid-block
@@ -2107,9 +2277,9 @@
 !   vdiag  : 1 / current diagonal term of the decomposed matrix
 !
 !-----------------------------------------------------------------------------
-
+! MRD: LU Decomp  - should go into sparseMatrix module
       subroutine Decomp  &
-     &  (ischan, ktloop, ncsp, cc2, vdiag)
+     &  (num1stOEqnsSolve, ktloop, ncsp, cc2, vdiag)
 
       implicit none
 
@@ -2121,7 +2291,7 @@
 !     Argument declarations.
 !     ----------------------
 
-      integer, intent(in)  :: ischan
+      integer, intent(in)  :: num1stOEqnsSolve
       integer, intent(in)  :: ktloop
       integer, intent(in)  :: ncsp
 
@@ -2157,13 +2327,15 @@
 !     -----------------------------------------------------------
 
 !     =======================
-      JLOOP: do j = 1, ischan
+      JLOOP: do j = 1, num1stOEqnsSolve !num species with reaction, we think
 !     =======================
 
 !       ==============================================
         IJTLOOP: do ijt = ijtlo(j,ncsp), ijthi(j,ncsp)
 !       ==============================================
 
+         !MRD: all things with 5 terms
+         ! should be part of sparse matrix type
           ij  = ijval(ijt)
           il5 = idl5 (ijt)
           ih5 = idh5 (ijt)
@@ -2177,7 +2349,8 @@
           ih1 = idh1 (ijt)
 
 !         -- Sum 5 terms at a time. --
-
+          ! MRD: does this unrolling really help...?
+          ! should be part of sparse matrix type
           do ic = il5, ih5
 
             ik0 = ikdeca(ic)
@@ -2193,7 +2366,7 @@
             kj4 = kjdece(ic)
 
             do k = 1, ktloop
-              cc2(k,ij) =  &
+              cc2(k,ij) =  & !ij is nth location of this matrix
      &          cc2(k,ij) -  &
      &          (cc2(k,ik0) * cc2(k,kj0)) -  &
      &          (cc2(k,ik1) * cc2(k,kj1)) -  &
@@ -2326,594 +2499,6 @@
 !-----------------------------------------------------------------------------
 !
 ! ROUTINE
-!   Pderiv
-!
-! DESCRIPTION
-!   This routine puts the partial derivatives of each ordinary differential
-!   equation into a matrix.  The form of the matrix equation is =>
-!
-!     P = I - H x Bo x J
-!
-!   where I = identity matrix, H = time step, Bo = coefficient corresponding
-!   to the order of the method, and J is the Jacobian matrix of partial
-!   derivatives.
-!
-!   Example of how partial derivatives are placed in an array =>
-!
-!     Species:          A,   B,   C
-!     Concentrations:  (A), (B), (C)
-!
-!     Reactions:    1) A          --> B      J
-!                   2) A  + B     --> C      K1
-!                   3) A  + B + C --> D      K2
-!
-!     First         d(A) / dt = -J(A) - K1(A)(B) - K2(A)(B)(C)
-!     Derivatives:  d(B) / dt = +J(A) - K1(A)(B) - K2(A)(B)(C)
-!                   d(C) / dt =       + K1(A)(B) - K2(A)(B)(C)
-!                   d(D) / dt =                  + K2(A)(B)(C)
-!
-!     Predictor matrix (P) = I - h * b * J:
-!       J = Jacobian matrix of partial derivates
-!       I = identity matrix
-!       h = time step
-!       b = coefficient of method
-!       R = h * b = -r1delt
-!
-!         A                      B                     C                  D
-!      _____________________________________________________________________
-!     |
-!   A | 1-R(-J-K1(B)-K2(B)(C))  -R(-K1(A)-K2(A)(C))   -R(-K2(A)(B))       0
-!     |
-!   B |  -R(+J-K1(B)-K2(B)(C)) 1-R(-K1(A)-K2(A)(C))   -R(-K2(A)(B))       0
-!     |
-!   C |  -R(  +K1(B)-K2(B)(C))  -R(+K1(A)-K2(A)(C))  1-R(-K2(A)(B))       0
-!     |
-!   D |  -R(        +K2(B)(C))  -R(      +K2(A)(C))   -R(+K2(A)(B))       1
-!
-!
-! ARGUMENTS
-!   ischan   : # of first-order eqns to solve, = # of spc = order of original
-!              matrix; ischan has a different value for day and night, and for
-!              gas- and aqueous-phase chemistry;
-!              # spc with prod or loss terms in Smvgear (?)
-!   ktloop   : # of grid-cells in a grid-block
-!   ncsp     : ncs       => for daytime   gas chemistry
-!              ncs + ICS => for nighttime gas chemistry
-!   nfdh2    : nfdh3 + # of rxns with two   active reactants
-!   nfdh3    :         # of rxns with three active reactants
-!   nfdl1    : nfdh2 + 1
-!   nfdl2    : nfdh3 + 1
-!   irma,b,c : spc # of each reactant; locates reordered active spc #s
-!   r1delt   : = -aset(nqq,1) * time_step = -coefficient_of_method * dt
-!   cnew     : init (and final) spc conc (# cm-3-air or moles l-1-h2o (?))
-!   rrate    : rxn rate coefficient =>
-!                rates w. 1 reactant:   s^-1
-!                rates w. 2 reactants:  l-h2o mole-1 s^-1 or cm^3 #-1 s^-1 (?)
-!                rates w. 3 reactants:  l^2-h2o m-2 s^-1  or cm^6 #-2 s^-1 (?)
-!   npderiv  : total # of times Pderiv is called
-!   cc2      : array of iarray units holding values of each matrix
-!              position actually used;
-!              cc2 = P = I - delt * aset(nqq,1) * partial_derivatives
-!   urate    : term of Jacobian (J) = partial derivative
-!   nfdh1    : nfdh2 + # of rxns with one   active reactant
-!
-!-----------------------------------------------------------------------------
-
-      subroutine Pderiv  &
-     &  (ischan, ktloop, ncsp, nfdh2, nfdh3, nfdl1, nfdl2, irma, irmb,  &
-     &   irmc, r1delt, cnew, rrate, npderiv, cc2, urate, nfdh1)
-
-      implicit none
-
-#     include "smv2chem_par.h"
-#     include "smv2chem2.h"
-
-
-!     ----------------------
-!     Argument declarations.
-!     ----------------------
-
-      integer, intent(in)  :: ischan
-      integer, intent(in)  :: ktloop
-      integer, intent(in)  :: ncsp
-      integer, intent(in)  :: nfdh2, nfdh3
-      integer, intent(in)  :: nfdl1, nfdl2
-      integer, intent(in)  :: irma (NMTRATE)
-      integer, intent(in)  :: irmb (NMTRATE)
-      integer, intent(in)  :: irmc (NMTRATE)
-      real*8,  intent(in)  :: r1delt
-      real*8,  intent(in)  :: cnew (KBLOOP, MXGSAER)
-      real*8,  intent(in)  :: rrate(KBLOOP, NMTRATE)
-
-      integer, intent(inout) :: npderiv
-      real*8,  intent(inout) :: cc2  (KBLOOP, 0:MXARRAY)
-      real*8,  intent(inout) :: urate(KBLOOP, NMTRATE, 3)
-
-      integer, intent(out) :: nfdh1
-
-
-!     ----------------------
-!     Variable declarations.
-!     ----------------------
-
-      integer :: ial, iar
-      integer :: iarry
-      integer :: ja, jb, jc
-      integer :: k
-      integer :: n, nkn
-      integer :: nondiag     ! # of final matrix positions, excluding diagonal
-                             ! terms, filled after all matrix processes
-      integer :: nondiag1    ! nondiag + 1
-      integer :: npdh, npdl
-
-      real*8  :: fracr1
-
-
-!     ----------------
-!     Begin execution.
-!     ----------------
-
-!c    Write (6,*) 'Pderiv called.'
-
-
-!     -----------------------------------------------------------
-!     Calculate partial derivatives and sum up partial derivative
-!     loss terms.
-!     -----------------------------------------------------------
-
-      npderiv  = npderiv + 1
-      iarry    = iarray(ncsp)
-      nondiag  = iarry - ischan
-      nondiag1 = nondiag + 1
-      nfdh1    = nfdh2 + ioner(ncsp)
-      npdl     = npdlo(ncsp)
-      npdh     = npdhi(ncsp)
-
-
-!     -----------------------------------------------------------
-!     Partial derivatives for rates with three active loss terms.
-!     -----------------------------------------------------------
-
-      do nkn = 1, nfdh3
-
-        ja = irma(nkn)
-        jb = irmb(nkn)
-        jc = irmc(nkn)
-
-        do k = 1, ktloop
-          urate(k,nkn,1) = rrate(k,nkn) * cnew(k,jb) * cnew(k,jc)
-          urate(k,nkn,2) = rrate(k,nkn) * cnew(k,ja) * cnew(k,jc)
-          urate(k,nkn,3) = rrate(k,nkn) * cnew(k,ja) * cnew(k,jb)
-        end do
-
-      end do
-
-
-!     ---------------------------------------------------------
-!     Partial derivatives for rates with two active loss terms.
-!     ---------------------------------------------------------
-
-      do nkn = nfdl2, nfdh2
-
-        ja = irma(nkn)
-        jb = irmb(nkn)
-
-        do k = 1, ktloop
-          urate(k,nkn,1) = rrate(k,nkn) * cnew(k,jb)
-          urate(k,nkn,2) = rrate(k,nkn) * cnew(k,ja)
-        end do
-
-      end do
-
-
-!     --------------------------------------------------------
-!     Partial derivatives for rates with one active loss term.
-!     --------------------------------------------------------
-
-      do nkn = nfdl1, nfdh1
-        do k = 1, ktloop
-          urate(k,nkn,1) = rrate(k,nkn)
-        end do
-      end do
-
-
-!     ------------------------------------------------------------------
-!     Put partial derivatives production and loss terms in matrix array.
-!     ------------------------------------------------------------------
-
-      do iar = 1, nondiag
-        do k = 1, ktloop
-          cc2(k,iar) = 0.0d0
-        end do
-      end do
-
-
-      do iar = nondiag1, iarry
-        do k = 1, ktloop
-          cc2(k,iar) = 1.0d0
-        end do
-      end do
-
-
-      do n = npdl, npdh
-
-        nkn    = nkpdterm(n)
-        iar    = ipospd  (n)
-        ial    = iialpd  (n)
-        fracr1 = fracpl  (n) * r1delt
-
-        do k = 1, ktloop
-          cc2(k,iar) = cc2(k,iar) + (fracr1 * urate(k,nkn,ial))
-        end do
-
-      end do
-
-
-      return
-
-      end subroutine Pderiv
-
-
-!-----------------------------------------------------------------------------
-!
-! ROUTINE
-!   Subfun
-!
-! DESCRIPTION
-!   This routine evaluates the first derivative of each ordinary
-!   differential equation (ODE).  It evaluates derivatives in the special
-!   form f = y'(est) = f(x,y,estimated), where f is the right hand side of
-!   the differential equation.
-!
-!   Example =>
-!
-!     Species:         A,   B,   C
-!     Concentrations: (A), (B), (C)
-!
-!     Reactions:    1) A          --> B      J
-!                   2) A  + B     --> C      K1
-!                   3) A  + B + C --> D      K2
-!
-!     First         d(A) / dt = -J(A) - K1(A)(B) - K2(A)(B)(C)
-!     Derivatives:  d(B) / dt = +J(A) - K1(A)(B) - K2(A)(B)(C)
-!                   d(C) / dt =       + K1(A)(B) - K2(A)(B)(C)
-!                   d(D) / dt =                  + K2(A)(B)(C)
-!
-! ARGUMENTS
-!   ischan   : # of first-order eqns to solve, = # of spc = order of original
-!              matrix; ischan has a different value for day and night, and for
-!              gas- and aqueous-phase chemistry;
-!              # spc with prod or loss terms in Smvgear (?)
-!   ktloop   : # of grid-cells in a grid-block
-!   nallr    : # of active rxns
-!   ncsp     : ncs       => for daytime   gas chemistry
-!              ncs + ICS => for nighttime gas chemistry
-!   nfdh2    : nfdh3 + # of rxns with two   active reactants
-!   nfdh3    :         # of rxns with three active reactants
-!   nfdl1    : nfdh2 + 1
-!   nfdl2    : nfdh3 + 1
-!   nfdrep   : nfdh3 + # of rxns with two active reactants that are not
-!              followed by a rxn with the same reactants
-!   nfdrep1  : nfdrep + 1
-!   irma,b,c : spc # of each reactant; locates reordered active spc #s
-!   cnew     : init (and final) spc conc (# cm^-3-air or moles l^-1-h2o (?))
-!   rrate    : rxn rate coefficient =>
-!                rates with 1 reactant:   s^-1
-!                rates with 2 reactants:  l-h2o mole^-1 s^-1 or
-!                                         cm^3 #-1 s^-1 (?)
-!                rates with 3 reactants:  l^2-h2o m-2 s-1  or cm^6 #-2 s-1 (?)
-!   nsubfun  : total # of times Subfun is called
-!   gloss    : first derivative = sum of prod. minus loss rates for a spc
-!   trate    : rxn rate (moles l^-1-h2o s^-1 or # cm^-3 s^-1 (?))
-!   nfdh1    : nfdh2 + # of rxns with one   active reactant
-!
-!-----------------------------------------------------------------------------
-
-      subroutine Subfun  &
-     &  (ischan, ktloop, nallr, ncsp, nfdh2, nfdh3, nfdl1, nfdl2,  &
-     &   nfdrep, nfdrep1, irma, irmb, irmc, cnew, rrate, nsubfun,  &
-     &   gloss, trate, nfdh1)
-
-      implicit none
-
-#     include "smv2chem_par.h"
-#     include "smv2chem2.h"
-
-
-!     ----------------------
-!     Argument declarations.
-!     ----------------------
-
-      integer, intent(in)  :: ischan
-      integer, intent(in)  :: ktloop
-      integer, intent(in)  :: nallr
-      integer, intent(in)  :: ncsp
-      integer, intent(in)  :: nfdh2, nfdh3
-      integer, intent(in)  :: nfdl1, nfdl2
-      integer, intent(in)  :: nfdrep, nfdrep1
-      integer, intent(in)  :: irma (NMTRATE)
-      integer, intent(in)  :: irmb (NMTRATE)
-      integer, intent(in)  :: irmc (NMTRATE)
-      real*8,  intent(in)  :: cnew (KBLOOP, MXGSAER)
-      real*8,  intent(in)  :: rrate(KBLOOP, NMTRATE)
-
-      integer, intent(inout) :: nsubfun
-      real*8,  intent(inout) :: gloss(KBLOOP, MXGSAER)
-      real*8,  intent(inout) :: trate(KBLOOP, NMTRATE*2)
-
-      integer, intent(out) :: nfdh1
-
-
-!     ----------------------
-!     Variable declarations.
-!     ----------------------
-
-      integer ::  ja, jb, jc
-      integer ::  jspc
-      integer ::  k
-      integer ::  n, nc, nh
-      integer ::  nh1, nh2, nh3, nh4, nh5
-      integer ::  nk0, nk1, nk2
-      integer ::  nk3, nk4, nkn
-      integer ::  nl1, nl2, nl3, nl4, nl5
-      integer ::  npl
-
-!     -----------------------------------------------------------------------
-!     concmult : product of concs in a rate; if two consecutive rxns have the
-!                same spc reacting (e.g., A + B --> C and A + B --> D + E),
-!                then use the same value for both rxns
-!     -----------------------------------------------------------------------
-
-      real*8  :: concmult
-      real*8  :: fracn
-
-
-!     ----------------
-!     Begin execution.
-!     ----------------
-
-!c    Write (6,*) 'Subfun called.'
-
-
-!     ----------------------
-!     Set rates of reaction.
-!     ----------------------
-
-      nsubfun = nsubfun + 1
-      nfdh1   = nfdh2 + ioner(ncsp)
-
-
-!     ---------------------------------------------------------
-!     First derivatives for rates with three active loss terms.
-!     ---------------------------------------------------------
-
-      do nkn = 1, nfdh3
-
-        ja = irma(nkn)
-        jb = irmb(nkn)
-        jc = irmc(nkn)
-
-        nh = nkn + nallr
-
-        do k = 1, ktloop
-          trate(k,nkn) =  &
-     &      rrate(k,nkn) * cnew(k,ja) * cnew(k,jb) * cnew(k,jc)
-          trate(k,nh)  = -trate(k,nkn)
-        end do
-
-      end do
-
-
-!     -------------------------------------------------------
-!     First derivatives for rates with two active loss terms.
-!     -------------------------------------------------------
-
-      do nkn = nfdl2, nfdrep
-
-        ja = irma(nkn)
-        jb = irmb(nkn)
-
-        nh = nkn + nallr
-
-        do k = 1, ktloop
-          trate(k,nkn) = rrate(k,nkn) * cnew(k,ja) * cnew(k,jb)
-          trate(k,nh)  = -trate(k,nkn)
-        end do
-
-      end do
-
-
-!     -----------------------------------------------------------
-!     First derivatives for rates with two active loss terms and
-!     where the subsequent reaction has the same reactants, but a
-!     different rate.
-!     -----------------------------------------------------------
-
-      do nkn = nfdrep1, nfdh2, 2
-
-        ja  = irma(nkn)
-        jb  = irmb(nkn)
-
-        nk2 = nkn + 1
-        nh  = nkn + nallr
-        nh2 = nk2 + nallr
-
-        do k = 1, ktloop
-          concmult     =  cnew(k,ja)   * cnew(k,jb)
-          trate(k,nkn) =  rrate(k,nkn) * concmult
-          trate(k,nk2) =  rrate(k,nk2) * concmult
-          trate(k,nh)  = -trate(k,nkn)
-          trate(k,nh2) = -trate(k,nk2)
-        end do
-
-      end do
-
-
-!     ------------------------------------------------------
-!     First derivatives for rates with one active loss term.
-!     ------------------------------------------------------
-
-      do nkn = nfdl1, nfdh1
-
-        ja = irma(nkn)
-
-        nh = nkn + nallr
-
-        do k = 1, ktloop
-          trate(k,nkn) =  rrate(k,nkn) * cnew(k,ja)
-          trate(k,nh)  = -trate(k,nkn)
-        end do
-
-      end do
-
-
-!     --------------------------------
-!     Initialize first derivative = 0.
-!     --------------------------------
-
-      do jspc = 1, ischan
-        do k = 1, ktloop
-          gloss(k,jspc) = 0.0d0
-        end do
-      end do
-
-
-!     ---------------------------------------------------------------
-!     Sum net (not reproduced) kinetic and photo gains and losses for
-!     each species.
-!
-!     Sum 1,2,3,4, or 5 terms at a time to improve vectorization.
-!     ---------------------------------------------------------------
-
-!     ==========================================
-      NPLLOOP: do npl = npllo(ncsp), nplhi(ncsp)
-!     ==========================================
-
-        jspc = jspnpl(npl)
-
-        nl5 = npl5(npl)
-        nh5 = nph5(npl)
-        nl4 = npl4(npl)
-        nh4 = nph4(npl)
-        nl3 = npl3(npl)
-        nh3 = nph3(npl)
-        nl2 = npl2(npl)
-        nh2 = nph2(npl)
-        nl1 = npl1(npl)
-        nh1 = nph1(npl)
-
-!       -- Sum 5 terms at a time. --
-
-        do nc = nl5, nh5
-
-          nk0 = lossra(nc)
-          nk1 = lossrb(nc)
-          nk2 = lossrc(nc)
-          nk3 = lossrd(nc)
-          nk4 = lossre(nc)
-
-          do k = 1, ktloop
-            gloss(k,jspc) =  &
-     &        gloss(k,jspc) -  &
-     &        trate(k,nk0)  - trate(k,nk1) - trate(k,nk2) -  &
-     &        trate(k,nk3)  - trate(k,nk4)
-          end do
-
-        end do
-
-!       -- Sum 4 terms at a time. --
-
-        do nc = nl4, nh4
-
-          nk0 = lossra(nc)
-          nk1 = lossrb(nc)
-          nk2 = lossrc(nc)
-          nk3 = lossrd(nc)
-
-          do k = 1, ktloop
-            gloss(k,jspc) =  &
-     &        gloss(k,jspc) -  &
-     &        trate(k,nk0)  - trate(k,nk1) - trate(k,nk2) -  &
-     &        trate(k,nk3)
-          end do
-
-        end do
-
-!       -- Sum 3 terms at a time. --
-
-        do nc = nl3, nh3
-
-          nk0 = lossra(nc)
-          nk1 = lossrb(nc)
-          nk2 = lossrc(nc)
-
-          do k = 1, ktloop
-            gloss(k,jspc) =  &
-     &        gloss(k,jspc) -  &
-     &        trate(k,nk0)  - trate(k,nk1)  - trate(k,nk2)
-          end do
-
-        end do
-
-!       -- Sum 2 terms at a time. --
-
-        do nc = nl2, nh2
-
-          nk0 = lossra(nc)
-          nk1 = lossrb(nc)
-
-          do k = 1, ktloop
-            gloss(k,jspc) =  &
-     &        gloss(k,jspc) -  &
-     &        trate(k,nk0)  - trate(k,nk1)
-          end do
-
-        end do
-
-!       -- Sum 1 term at a time. --
-
-        do nc = nl1, nh1
-
-          nk0 = lossra(nc)
-
-          do k = 1, ktloop
-            gloss(k,jspc) =  &
-     &        gloss(k,jspc) -  &
-     &        trate(k,nk0)
-          end do
-
-        end do
-
-!     ==============
-      end do NPLLOOP
-!     ==============
-
-
-!     --------------------------------------------------------------
-!     Sum production term for reactions where products fractionated.
-!     --------------------------------------------------------------
-
-      do n = nfrlo(ncsp), nfrhi(ncsp)
-
-        jspc  = jspcnfr(n)
-        nkn   = nknfr  (n)
-        fracn = fracnfr(n)
-
-        do k = 1, ktloop
-          gloss(k,jspc) = gloss(k,jspc) + (fracn * trate(k,nkn))
-        end do
-
-      end do
-
-
-      return
-
-      end subroutine Subfun
-
-
-!-----------------------------------------------------------------------------
-!
-! ROUTINE
 !   Update
 !
 ! DESCRIPTION
@@ -2933,6 +2518,9 @@
 !   trate    : rxn rate (moles l^-1-h2o s^-1 or # cm^-3 s^-1 (?))
 !
 !-----------------------------------------------------------------------------
+! MRD: Update is probably setPhotolysisCoeffs and computeRateCoeffs
+! MRD: Is going into the mechanism
+! MRD: Solver will not call it
 
       subroutine Update  &
      &  (ktloop, nallr, ncs, ncsp, jphotrat, pratk1, rrate, trate)
@@ -3010,4 +2598,5 @@
       return
 
       end subroutine Update
+
 

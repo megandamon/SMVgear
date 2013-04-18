@@ -112,6 +112,7 @@
         Write (6,*) 'doSmv2Solver called by ', localProc
       end if
 
+      print*, "Writing to: ", smv2Chem1Entry
 
       write(smv2Chem1Entry,1001) rank
  1001 format('smv2chem1_entry.proc',i4.4)
@@ -127,6 +128,7 @@
  1006 format('physproc_exit.proc',i4.4)
 
 !read smv2chem1 on entry to physproc to be used for standAlone code
+      print*, "Reading from: ", smv2Chem1Entry
       open(file=trim(smv2Chem1Entry),unit=23,form="formatted")
       read(23,*) 
       read(23,*) ifreord
@@ -482,9 +484,14 @@
       read(27,*)
       read(27,*) speciesConst(1:numZones, 1:IGAS)
 
+
+    print*, "read from: ", trim(physProcEntry), " prDiag = ", prDiag
+    prDiag = 1
+
 !     ==========
       if (first) then
 !     ==========
+        print*, "First! ", first
 
         first = .false.
 
@@ -502,6 +509,8 @@
       jReOrder(:) = 0; lReOrder(:) = 0
 
       errorMx2  (:) = 0.0d0
+
+      print*, "prDiag: ", prDiag
 
       call timingOn("Physproc")
 !     =============
@@ -886,7 +895,7 @@
       deallocate(surfaceEmissions)
       deallocate(speciesConst)
 
-      call timingPrint
+   !   call timingPrint
 
       print*, "Exiting doSmv2Solver"
 
