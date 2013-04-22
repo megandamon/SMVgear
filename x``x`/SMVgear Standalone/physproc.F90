@@ -1,4 +1,3 @@
-
 !=============================================================================
 !
 ! $Id: physProc.F90,v 1.1.1.1.2.1.148.2 2012-04-21 01:24:58 aoloso Exp $
@@ -170,11 +169,11 @@
 
       real*8, parameter :: PHOTOLYSIS_THRESHOLD = 1.0d-80
       logical :: isDaytimeInFirstCell, isDaytime, dayAndNight
+      integer ::  isDaytimeInFirstCell_I, isDaytime_I, dayAndNight_I
 
 !     ----------------
 !     Begin execution.
 !     ----------------
-
 !     --------------------------------------------------------
 !     Can the domain be separated into day and night sections?
 !     --------------------------------------------------------
@@ -183,28 +182,16 @@
       else
         ifSun = 2
       end if
+      print*, "First cell check, ifSun = ", ifSun
 
+      ! The can replace code block above
       isDaytimeInFirstCell = (prate(1,1) >= PHOTOLYSIS_THRESHOLD)
+      ! TODO MRD: isDayTimeInFirstCell = T should be equivalent to 1 (see ifSun)
 
-      print*, prate(1,1), " ? ", PHOTOLYSIS_THRESHOLD
-      stop
-
-
-
-
-      dayAndNight = .false. ! unless ...
-      do jloop = 2, ntLoopNcs(gasChemistryType)
-        isDaytime = (prate(1,1) >= PHOTOLYSIS_THRESHOLD)
-        if (isDaytime .neqv. isDaytimeInFirstCell) then
-            dayAndNight = .true.
-            print*, "making the switch 1"
-            exit
-        end if
-      end do
-
-
-
-
+!     --------------------------------------------------------
+!     If first cell is day time, and another cell is not, then
+!     set idaynt to indicate day and night (idaynt=2)
+!     --------------------------------------------------------
       idaynt = 1
 
       if (ifSun == 1) then
@@ -212,40 +199,47 @@
         ifSun1: do jloop = 2, ntLoopNcs(gasChemistryType)
           if (prate(jloop,1) .lt. PHOTOLYSIS_THRESHOLD) then
             idaynt = 2
-            print*, "making the switch 2a"
+            print*, "ifSun = 1 and idaynt flipped"
             exit ifSun1
           end if
         end do ifSun1
+
+!     --------------------------------------------------------
+!     If first cell is night time, and another cell is not, then
+!     set idaynt to indicate day and night (idaynt=2)
+!     --------------------------------------------------------
 
       else if (ifSun == 2) then
 
         ifSun2: do jloop = 2, ntLoopNcs(gasChemistryType)
           if (prate(jloop,1) .gt. PHOTOLYSIS_THRESHOLD) then
-            print*, "making the switch 2b"
             idaynt = 2
+            print*, "ifSun = 2 and idaynt flipped"
             exit ifSun2
           end if
         end do ifSun2
 
       end if
 
-    print*, "idaynt = ", idaynt
-    print*, "dayAndNight = ", dayAndNight
-    idaynt = dayAndNight + 1 ! check
-    print*, "idaynt after: ", idaynt
+      ! The can replace the two code blocks above
+      dayAndNight = .false. ! unless ...
+      do jloop = 2, ntLoopNcs(gasChemistryType)
+        isDaytime = (prate(jloop,1) >= PHOTOLYSIS_THRESHOLD)
+        if (isDaytime .neqv. isDaytimeInFirstCell) then
+            dayAndNight = .true.
+            exit
+        end if
+      end do
+      ! TODO MRD: dayAndNight = .true. should be equivalent to 2 (see idaynt)
 
-    print*, ""
 
 !     --------------------------------------------------
 !     Reorder cells and blocks then solve chemical odes.
 !     --------------------------------------------------
-
+      loreord = 2
       if ((doReOrder == 1) .and. (numZones > 1)) then
         loreord = 1
-      else
-        loreord = 2
       end if
-
 
       do iday = 1, idaynt
         do ireord = loreord, 2
