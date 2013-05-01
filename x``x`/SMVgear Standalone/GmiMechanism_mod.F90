@@ -5,6 +5,7 @@ module GmiMechanism_mod
 
 #     include "smv2chem_par.h"
 
+   public :: initializeMechanism
    public :: setBoundaryConditions
    public :: velocity
    public :: calculateTermOfJacobian
@@ -24,6 +25,7 @@ module GmiMechanism_mod
                      ! two active reactants that are not
                        ! followed by a rxn with the same reactant
        integer :: numActiveReactants ! CHECK WITH TOM
+       ! spc # of each reactant; locates reordered active spc #s
        integer :: speciesNumberA    (NMTRATE)
        integer :: speciesNumberB    (NMTRATE)
        integer :: speciesNumberC    (NMTRATE)
@@ -41,6 +43,38 @@ module GmiMechanism_mod
     end type Mechanism_type
 
 contains
+
+
+
+!-----------------------------------------------------------------------------
+!
+! ROUTINE
+!   initializeMechansim
+!
+! DESCRIPTION
+!-----------------------------------------------------------------------------
+      subroutine initializeMechanism (this, ktloop, irma, &
+                                      & irmb, irmc, nfdh2, nfdh3, nfdrep)
+         !     ----------------------
+         !     Argument declarations.
+         !     ----------------------
+         type (Mechanism_type) :: this
+         integer, intent(in)  :: irma    (NMTRATE)
+         integer, intent(in)  :: irmb    (NMTRATE)
+         integer, intent(in)  :: irmc    (NMTRATE)
+         integer, intent(in)  :: ktloop
+         integer, intent(in)  :: nfdh2,  nfdh3
+         integer, intent(in)  :: nfdrep
+
+         this%numGridCellsInBlock = ktloop
+         this%speciesNumberA = irma ! MRD: these probably shouldn't be in object
+         this%speciesNumberB = irmb
+         this%speciesNumberC = irmc
+         this%numRxns2 = nfdh2
+         this%numRxns3 = nfdh3
+         this%numRxns3Drep = nfdrep
+
+      end subroutine initializeMechanism
 
 
 !-----------------------------------------------------------------------------
@@ -449,24 +483,27 @@ contains
     ! if chem_tdt changes or if the order changes, the Jacobian will change
 !-----------------------------------------------------------------------------
 
-      subroutine calculateTermOfJacobian (this, concentrationsNew, reactionRates)
+      subroutine calculateTermOfJacobian (this, concentrationsNew, reactionRates, ioner)
 
          implicit none
 
-!     ----------------------
-!     Argument declarations.
-!     ----------------------
+         !     ----------------------
+         !     Argument declarations.
+         !     ----------------------
          type (Mechanism_type) :: this
          real*8,  intent(in)  :: concentrationsNew  (KBLOOP, MXGSAER)
          real*8,  intent(out) :: reactionRates (KBLOOP, NMTRATE, 3)
+         integer, intent(in) :: ioner
 
-!     ----------------------
-!     Variable declarations.
-!     ----------------------
-        integer :: nkn, block
-        integer :: ja, jb, jc
+         !     ----------------------
+         !     Variable declarations.
+         !     ----------------------
+         integer :: nkn, block
+         integer :: ja, jb, jc
 
-!    Partial derivatives for rates with three active loss terms.
+         this%numRxns1 = this%numRxns2 + ioner
+
+         !    Partial derivatives for rates with three active loss terms.
          do nkn = 1, this%numRxns3
             ja = this%speciesNumberA(nkn)
             jb = this%speciesNumberB(nkn)

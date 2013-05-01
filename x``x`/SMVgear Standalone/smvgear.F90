@@ -12,8 +12,8 @@
 !   smvgear.F
 !
 ! ROUTINES
-!   Smvgear
 !   Backsub
+!   Smvgear
 !   Decomp
 !   Update
 !
@@ -35,7 +35,6 @@
 !   This version is Smvgear II, 9/96.  It has been modified to include
 !   grid-cell reordering prior to each time interval and different chemistry
 !   for different atmospheric regions.  The purpose of the reordering is to
-!   group cells with stiff equations together and those with non-stiff
 !   equations together.  This reordering can save signifcant computer time
 !   (e.g., speed the code by a factor of two or more), depending on the
 !   variation in stiffness throughout the grid-domain.  When the stiffness is
@@ -120,7 +119,6 @@
 !   pr_nc_period     : NetCDF output period
 !   tdt      : model time step (s)
 !   do_cell_chem     : do chemistry for a particular cell?
-!   irma,b,c : spc # of each reactant; locates reordered active spc #s
 !   jreorder : gives original grid-cell from re-ordered grid-cell
 !   jphotrat : tbd
 !   inewold  : original spc # of each new jnew spc
@@ -233,7 +231,6 @@
 
 !     ------------------------------------------------------------------------
 !
-!     ifsuccess : identifies whether step is successful (=1) or not (=0)
 !     jeval     :  1 => call Pderiv the next time through the corrector steps;
 !                  0 => last step successful and do not need to call Pderiv;
 !                 -1 => Pderiv just called, and do not need to call again
@@ -242,7 +239,6 @@
 
       integer :: i, j, k
       integer :: i1, i2
-      integer :: ifsuccess
       integer :: jb
       integer :: jeval
       integer :: jg1
@@ -257,7 +253,6 @@
       integer :: ncsp  ! ncs       => for daytime   gas chemistry
                        ! ncs + ICS => for nighttime gas chemistry
       integer :: nqisc
-
       integer :: ibcb(IGAS)
 
 !     ------------------------------------------------
@@ -270,9 +265,6 @@
 !     delt      : current time step (s)
 !     MAX_REL_CHANGE     : max relative change in delt*aset(1) before Pderiv is called
 !     order     : floating point value of num1stOEqnsSolve, the order of # of ODEs
-!     rdeltdn   : time step ratio at one order lower  than current order
-!     rdeltsm   : time step ratio at current order
-!     rdeltup   : time step ratio at one order higher than current order
 !     ------------------------------------------------------------------------
 
       real*8  :: asnqqj
@@ -280,11 +272,10 @@
       real*8  :: cnw
       real*8  :: consmult
       real*8  :: delt
-      real*8  :: der1max, der3max
       real*8  :: dtasn1
+      real*8  :: der1max, der3max
       real*8  :: errymax
       real*8  :: r1delt, rdelta
-      real*8  :: rdeltdn, rdeltsm, rdeltup
       real*8  :: real_kstep
       real*8  :: rmsErrorPrevious, rmsrat
       real*8  :: xtimestep
@@ -316,13 +307,9 @@
       type (Manager_type) :: managerObject
       integer :: nondiag     ! # of final matrix positions, excluding diagonal
 
-      mechanismObject%numGridCellsInBlock = ktloop
-      mechanismObject%speciesNumberA = irma ! MRD: these probably shouldn't be in object
-      mechanismObject%speciesNumberB = irmb
-      mechanismObject%speciesNumberC = irmc
-      mechanismObject%numRxns2 = nfdh2
-      mechanismObject%numRxns3 = nfdh3
-      mechanismObject%numRxns3Drep = nfdrep
+
+      call initializeMechanism (mechanismObject, ktloop, irma, &
+                              &  irmb, irmc, nfdh2, nfdh3, nfdrep)
 
       nact = nnact
 
@@ -332,13 +319,10 @@
 
       call resetGear (managerObject, ncsp, ncs, ifsun, hmaxnit)
 
-! 100 calls 150
 !     ========
  100  continue
 !     ========
-!     ----------------------------------------------------
-!     Start time interval or re-enter after total failure.
-!     ----------------------------------------------------
+
       print*, "in 100"
 
       call startTimeInterval (managerObject, ncs)
@@ -352,10 +336,11 @@
         end do
       end do
 
-! routine start restartTimeInterval
+
 !     --------------------------------------------------------------------
 !     Re-enter here if total failure or if restarting with new cell block.
 !     --------------------------------------------------------------------
+
 ! 150 resets some stuff, then calls update
 !     ========
  150  continue
@@ -363,11 +348,7 @@
 
       print*, "in 150"
 
-
-      managerObject%hratio    = 0.0d0
-      managerObject%asn1      = 1.0d0
-      ifsuccess = 1
-      managerObject%rdelmax   = 1.0d4
+      call resetBeforeUpdate (managerObject)
 
 !     ---------------------
 !     Initialize photrates.
@@ -578,7 +559,7 @@
 !     --------------------------------------------------------------
    print*, "last time step was successful"
 !     ================================
-      IFSUCCESSIF: if (ifsuccess == 1) then
+      IFSUCCESSIF: if (managerObject%ifsuccess == 1) then
 !     ================================
 
         managerObject%rdelmax = 10.0d0
@@ -753,20 +734,11 @@
 
       if (jeval == 1) then
          print*, "re-evalulate predictor matrix"
+
          r1delt = -managerObject%asn1 * delt
-
-         ! MRD: The below functionality has replaced the subroutine Pderiv
-         !       ===========
-         !        call Pderiv  &
-         !       ===========
-         !         (mechanismObject, managerObject%num1stOEqnsSolve, ncsp, nfdh2, nfdh3, nfdl1, nfdl2, irma, irmb,  &
-         !     &   irmc, r1delt, cnew, rrate, npderiv, cc2, urate, nfdh1)
-
-
          nondiag  = iarray(ncsp) - managerObject%num1stOEqnsSolve ! iarray is in common block
-         mechanismObject%numRxns1 = nfdh2 + ioner(ncsp)
 
-         call calculateTermOfJacobian (mechanismObject, cnew, urate)
+         call calculateTermOfJacobian (mechanismObject, cnew, urate, ioner(ncsp))
 
          managerObject%numCallsPredict  = managerObject%numCallsPredict + 1
          ! MRD: iarray, npdhi, and npdlo are in common blocks
@@ -927,7 +899,7 @@
         managerObject%numFailAfterPredict     = managerObject%numFailAfterPredict + 1
         managerObject%rdelmax   = 2.0d0
         jeval     = 1
-        ifsuccess = 0
+        managerObject%ifsuccess = 0
         managerObject%xelaps    = managerObject%told
         managerObject%rdelt     = fracdec
 
@@ -1021,8 +993,8 @@
         ! prefer strings to integers
         if (managerObject%jFail <= 6) then
 
-          ifsuccess = 0
-          rdeltup   = 0.0d0
+          managerObject%ifsuccess = 0
+          managerObject%rdeltup   = 0.0d0
       print*, "managerObject%jFail <= 6"
 !         =========
           go to 400
@@ -1030,7 +1002,7 @@
 
         else if (managerObject%jFail <= 20) then
       print*, "managerObject%jFail <= 20"
-          ifsuccess = 0
+          managerObject%ifsuccess = 0
           managerObject%rdelt     = fracdec
 
 !         =========
@@ -1092,7 +1064,6 @@
 !
 !       After a successful step, update the concentration and all
 !       derivatives, reset told, set ifsuccess = 1, increment numSuccessTdt,
-!       and reset managerObject%jFail = 0.
 !       -------------------------------------------------------------
    print*, "successful stepping"
 
@@ -1112,7 +1083,7 @@
 
 
         managerObject%jFail     = 0
-        ifsuccess = 1
+        managerObject%ifsuccess = 1
         managerObject%numSuccessTdt    = managerObject%numSuccessTdt + 1
         managerObject%told      = managerObject%xelaps
 
@@ -1283,11 +1254,11 @@ print*, "update chemistry mass balance"
 
         end do
 
-        rdeltup = 1.0d0 / ((managerObject%conp3 * der3max**enqq3(managerObject%nqq)) + 1.4d-6)
+        managerObject%rdeltup = 1.0d0 / ((managerObject%conp3 * der3max**enqq3(managerObject%nqq)) + 1.4d-6)
 
       else
 
-        rdeltup = 0.0d0
+        managerObject%rdeltup = 0.0d0
 
       end if
 
@@ -1296,72 +1267,8 @@ print*, "update chemistry mass balance"
 
 !     ========
  400  continue
-!     ========
-   print*, "in 400"
 
-!     ------------------------------------------------------------
-!     Estimate the time step ratio (rdeltsm) at the current order.
-!     der2max was calculated during the error tests earlier.
-!     ------------------------------------------------------------
-
-      rdeltsm = 1.0d0 / ((managerObject%conp2 * managerObject%der2max**enqq2(managerObject%nqq)) + 1.2d-6)
-
-
-!     ------------------------------------------------------------------
-!     Estimate the time step ratio (rdeltdn) at one order lower than
-!     the current order.  if nqq = 1, then we cannot test a lower order.
-!     ------------------------------------------------------------------
-        ! routine start estimateTimeStepRatioLowerOrder
-!     -------------------------------------------------------------------
-
-      if (managerObject%nqq > 1) then
-
-        do kloop = 1, ktloop
-          dely(kloop) = 0.0d0
-        end do
-
-        kstepisc = (managerObject%kstep - 1) * managerObject%num1stOEqnsSolve
-
-!c
-        do kloop = 1, ktloop
-          do jspc = 1, managerObject%num1stOEqnsSolve
-
-            i = jspc + kstepisc
-
-            errymax     = conc(kloop,i) * managerObject%chold(kloop,jspc)
-            dely(kloop) = dely(kloop) + (errymax * errymax)
-
-          end do
-
-        end do
-
-        der1max = 0.0d0
-
-        do kloop = 1, ktloop
-          if (dely(kloop) > der1max) then
-            der1max = dely(kloop)
-          end if
-        end do
-
-        rdeltdn = 1.0d0 / ((managerObject%conp1 * der1max**enqq1(managerObject%nqq)) + 1.3d-6)
-
-      else
-
-        rdeltdn = 0.0d0
-
-      end if
-
-
-!     -----------------------------------------------------------------
-!     Find the largest of the predicted time step ratios of each order.
-!     -----------------------------------------------------------------
-
-      managerObject%rdelt = Max (rdeltup, rdeltsm, rdeltdn)
-
-      ! routine start estimateTimeStepRatioLowerOrder
-!     -------------------------------------------------------------------
-
-
+      call estimateTimeStepRatio (managerObject, ktloop, dely, conc)
 
 !     ---------------------------------------------------------------
 !     If the last step was successful and rdelt is small, keep the
@@ -1369,7 +1276,7 @@ print*, "update chemistry mass balance"
 !     re-checking the time step and order.
 !     ---------------------------------------------------------------
 
-      if ((managerObject%rdelt < 1.1d0) .and. (ifsuccess == 1)) then
+      if ((managerObject%rdelt < 1.1d0) .and. (managerObject%ifsuccess == 1)) then
 
         managerObject%idoub = 3
 
@@ -1383,7 +1290,7 @@ print*, "update chemistry mass balance"
 !       to <= 1, when ifsuccess = 0 since this is less efficient.
 !       --------------------------------------------------------------
 
-      else if (managerObject%rdelt == rdeltdn) then
+      else if (managerObject%rdelt == managerObject%rdeltdn) then
 
         managerObject%nqq = managerObject%nqq - 1
 
@@ -1393,7 +1300,7 @@ print*, "update chemistry mass balance"
 !       for the higher order.
 !       ---------------------------------------------------------------
 
-      else if (managerObject%rdelt == rdeltup) then
+      else if (managerObject%rdelt == managerObject%rdeltup) then
 
 ! routine start increareOrderAddDerTerm
 !     -------------------------------------------------------------------
