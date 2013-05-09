@@ -6,11 +6,12 @@
 
 module GmiManager_mod
 
+   use Smv2Chem2_mod
+
    implicit none
    private
 
 #     include "smv2chem_par.h"
-#     include "smv2chem2.h"
 
    public :: Manager_type
    public :: resetGear
@@ -53,7 +54,7 @@ module GmiManager_mod
        real*8  :: order, order_inv
        real*8  :: chemTimeInterval !total chem time interval; same as chemintv (s)
        real*8  :: maxTimeStep ! max time step at a given time (s)
-       real*8  :: failureFraction != 1 originially, but is decreased if excessive failures
+       real*8  :: failureFraction ! = 1 originially, but is decreased if excessive failures
                ! occur in order to reduce absolute error tolerance
        real*8  :: timeremain ! remaining time in an chem interval (s)
        real*8  :: iabove
@@ -249,6 +250,7 @@ contains
       rmsErrorPrevious = this%rmsError
       this%der2max = 0.0d0
 
+      ! make this a one line using maxval
       do kloop = 1, ktloop
         if (dely(kloop) > this%der2max) then
           this%der2max = dely(kloop)
@@ -274,7 +276,7 @@ contains
 !   tightenErrorTolerance
 ! DESCRIPTION
 !     tighten absoloute error tolerance and restart integration
-!     at beginning of time interva
+!     at beginning of time interval
 ! Created by: Megan Rose Damon
 !   pr_smv2  : should the SmvgearII     output file be written
 !   lunsmv   : logical unit number to write to when pr_smv2 is true
@@ -297,7 +299,7 @@ contains
       real*8, intent(inout) :: delt
 
       if (pr_smv2) then
-         Write (lunsmv,950) delt, this%timeremain, this%failureFraction, errmax(ncs)
+         Write (lunsmv,950) delt, this%timeremain, this%failureFraction, relativeErrorTolerance(ncs)
       end if
 
       950    format ('Smvgear:  delt      = ', 1pe9.3, /,  '          timremain = ', 1pe9.3, /,  &
@@ -328,6 +330,9 @@ contains
 !     should be updated. (edit by MRD on 2/27/2013)
 ! Created by: Megan Rose Damon
 !     delt      : current time step (s)
+! Unit testing ideas: can't take a step bigger than what we have remaining
+! Make this a method on a class?
+! two routines: update time step and determine Jacobian (something like this)
 !-----------------------------------------------------------------------------
    subroutine calculateTimeStep (this, delt, jeval, maxRelChange)
 
@@ -345,9 +350,10 @@ contains
       hmtim  = Min (this%maxTimeStep, this%timeremain)
       this%rdelt  = Min (this%rdelt, this%rdelmax, hmtim/delt)
       delt   = delt   * this%rdelt
+
       this%hratio = this%hratio * this%rdelt
       this%xelaps = this%xelaps + delt
-
+      ! rename nslp
       if ((Abs (this%hratio-1.0d0) > maxRelChange) .or. (this%numSuccessTdt >= this%nslp)) then
         jeval = 1 ! MRD: could be a boolean; this is signifying to whether or not to update Jacobian
       end if
@@ -382,11 +388,11 @@ contains
 
       this%nqqold = this%nqq
       this%kstep  = this%nqq + 1
-      this%hratio = this%hratio * aset(this%nqq,1) / this%asn1
-      this%asn1   = aset(this%nqq,1)
-      this%enqq   = pertst2(this%nqq,1) * this%order
-      eup    = pertst2(this%nqq,2) * this%order
-      edwn   = pertst2(this%nqq,3) * this%order
+      this%hratio = this%hratio * coeffsForIntegrationOrder(this%nqq,1) / this%asn1
+      this%asn1   = coeffsForIntegrationOrder(this%nqq,1)
+      this%enqq   = coeffsForSelectingStepAndOrder(this%nqq,1) * this%order
+      eup    = coeffsForSelectingStepAndOrder(this%nqq,2) * this%order
+      edwn   = coeffsForSelectingStepAndOrder(this%nqq,3) * this%order
       this%conp3  = 1.4d0 /  (eup**enqq3(this%nqq)) !eup is zero
       this%conp2  = 1.2d0 / (this%enqq**enqq2(this%nqq)) !enqq is zero
       this%conp1  = 1.3d0 / (edwn**enqq1(this%nqq)) !edwn is zero
@@ -527,7 +533,7 @@ contains
 
       ! MRD: abtol in common block?
       ! put abtol in another structure
-      this%abtoler1  = abtol(6,ncs) * this%reltol1
+      this%abtoler1  = absoluteErrorTolerance(6,ncs) * this%reltol1
 
 
    end subroutine startTimeInterval
@@ -543,6 +549,8 @@ contains
 !   ncs      : identifies gas chemistry type (1..NCSGAS)
 !-----------------------------------------------------------------------------
       subroutine resetGear (this, ncsp, ncs, ifsun, hmaxnit)
+
+         use Smv2Chem2_mod
 
          ! ----------------------
          ! Argument declarations.
@@ -569,7 +577,7 @@ contains
          this%rmsError    = 1.0d0
 
          ! MRD: derived from common block
-         this%num1stOEqnsSolve    = ischang(ncs)
+         this%num1stOEqnsSolve    = numOrigSpcGtrOrEql1PdTerm(ncs)
          print*, "num1stOEqunsSolve: ", this%num1stOEqnsSolve
          this%order     = this%num1stOEqnsSolve
          this%order_inv = 1.0d0 / this%num1stOEqnsSolve
@@ -585,9 +593,9 @@ contains
 
          this%failureFraction   = 1.0d0
          this%iabove = this%order * 0.4d0
-         this%initialError     = Min (errmax(ncs), 1.0d-03)
+         this%initialError     = Min (relativeErrorTolerance(ncs), 1.0d-03)
          this%initialError_inv = 1.0d0 / this%initialError
-         this%errmax_ncs_inv = 1.0d0 / errmax(ncs)
+         this%errmax_ncs_inv = 1.0d0 / relativeErrorTolerance(ncs)
 
       end subroutine resetGear
 

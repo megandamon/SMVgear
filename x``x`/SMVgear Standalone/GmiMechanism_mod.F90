@@ -184,10 +184,10 @@ contains
       subroutine velocity (this, ischan, ncsp, concentrationsNew, &
                         gloss, reactionRates, nfdh1)
 
+      use Smv2Chem2_mod
       implicit none
 
 #     include "smv2chem_par.h"
-#     include "smv2chem2.h"
 
 !     ----------------------
 !     Argument declarations.
@@ -233,7 +233,7 @@ contains
 !     ----------------------
 !     Set rates of reaction.
 !     ----------------------
-      nfdh1   = this%numRxns2 + ioner(ncsp)
+      nfdh1   = this%numRxns2 + numRxnsOneActiveReactant(ncsp)
 
 !     ---------------------------------------------------------
 !     First derivatives for rates with three active loss terms.
@@ -347,11 +347,11 @@ contains
         do nc = nl5, nh5
 
           ! MRD: this is an out dated (unnecessary?) optimization
-          nk0 = lossra(nc)
-          nk1 = lossrb(nc)
-          nk2 = lossrc(nc)
-          nk3 = lossrd(nc)
-          nk4 = lossre(nc)
+          nk0 = reOrderedRxnRateEachLossA(nc)
+          nk1 = reOrderedRxnRateEachLossB(nc)
+          nk2 = reOrderedRxnRateEachLossC(nc)
+          nk3 = reOrderedRxnRateEachLossD(nc)
+          nk4 = reOrderedRxnRateEachLossE(nc)
 
           ! up to five species
           do k = 1, this%numGridCellsInBlock
@@ -368,10 +368,10 @@ contains
         do nc = nl4, nh4
 
           ! MRD: this is an out dated (unnecessary?) optimization
-          nk0 = lossra(nc)
-          nk1 = lossrb(nc)
-          nk2 = lossrc(nc)
-          nk3 = lossrd(nc)
+          nk0 = reOrderedRxnRateEachLossA(nc)
+          nk1 = reOrderedRxnRateEachLossB(nc)
+          nk2 = reOrderedRxnRateEachLossC(nc)
+          nk3 = reOrderedRxnRateEachLossD(nc)
 
           do k = 1, this%numGridCellsInBlock
             gloss(k,jspc) =  &
@@ -386,9 +386,9 @@ contains
 
         do nc = nl3, nh3
 
-          nk0 = lossra(nc)
-          nk1 = lossrb(nc)
-          nk2 = lossrc(nc)
+          nk0 = reOrderedRxnRateEachLossA(nc)
+          nk1 = reOrderedRxnRateEachLossB(nc)
+          nk2 = reOrderedRxnRateEachLossC(nc)
 
           do k = 1, this%numGridCellsInBlock
             gloss(k,jspc) =  &
@@ -402,8 +402,8 @@ contains
 
         do nc = nl2, nh2
 
-          nk0 = lossra(nc)
-          nk1 = lossrb(nc)
+          nk0 = reOrderedRxnRateEachLossA(nc)
+          nk1 = reOrderedRxnRateEachLossB(nc)
 
           do k = 1, this%numGridCellsInBlock
             gloss(k,jspc) =  &
@@ -417,7 +417,7 @@ contains
 
         do nc = nl1, nh1
 
-          nk0 = lossra(nc)
+          nk0 = reOrderedRxnRateEachLossA(nc)
 
           do k = 1, this%numGridCellsInBlock
             gloss(k,jspc) =  &
@@ -447,7 +447,6 @@ contains
         end do
 
       end do
-
 
       return
 
@@ -483,7 +482,7 @@ contains
     ! if chem_tdt changes or if the order changes, the Jacobian will change
 !-----------------------------------------------------------------------------
 
-      subroutine calculateTermOfJacobian (this, concentrationsNew, reactionRates, ioner)
+      subroutine calculateTermOfJacobian (this, concentrationsNew, reactionRates, numRxnsOneActiveReactant)
 
          implicit none
 
@@ -493,7 +492,7 @@ contains
          type (Mechanism_type) :: this
          real*8,  intent(in)  :: concentrationsNew  (KBLOOP, MXGSAER)
          real*8,  intent(out) :: reactionRates (KBLOOP, NMTRATE, 3)
-         integer, intent(in) :: ioner
+         integer, intent(in) :: numRxnsOneActiveReactant
 
          !     ----------------------
          !     Variable declarations.
@@ -501,7 +500,7 @@ contains
          integer :: nkn, block
          integer :: ja, jb, jc
 
-         this%numRxns1 = this%numRxns2 + ioner
+         this%numRxns1 = this%numRxns2 + numRxnsOneActiveReactant
 
          !    Partial derivatives for rates with three active loss terms.
          do nkn = 1, this%numRxns3

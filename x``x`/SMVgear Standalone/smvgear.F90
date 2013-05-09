@@ -160,12 +160,12 @@
       use GmiMechanism_mod
       use GmiManager_mod
       use GmiSparseMatrix_mod
+      use Smv2Chem2_mod
 
 
       implicit none
 
 #     include "smv2chem_par.h"
-#     include "smv2chem2.h"
 
 
 !     ----------------------
@@ -332,10 +332,9 @@
 !     -------------------------------
       do jnew = 1, managerObject%num1stOEqnsSolve
         do kloop = 1, ktloop
-          cnew(kloop, jnew) = corig(kloop, jnew)
+          cnew(kloop, jnew) = corig(kloop, jnew) ! why save this?
         end do
       end do
-
 
 !     --------------------------------------------------------------------
 !     Re-enter here if total failure or if restarting with new cell block.
@@ -356,7 +355,6 @@
 
 !DIR$ INLINE
 !
-      print*, "Calling update"
 
       ! MRD: Update will be moved outside the solver
       ! It will exist in the GMI driver
@@ -372,7 +370,6 @@
       mechanismObject%rateConstants = rrate
       mechanismObject%numActiveReactants = nallr
 
-      print*, "Calling velocity"
       call velocity (mechanismObject, managerObject%num1stOEqnsSolve, ncsp, cnew, gloss, trate, nfdh1)
       managerObject%numCallsVelocity = managerObject%numCallsVelocity + 1
 
@@ -392,7 +389,6 @@
         dely(kloop) = 0.0d0
       end do
 
-   print*, "determining if ireordif: ", ireord
 ! get rid of magic number 1
 ! refactor this into routine(s) smvgear until we deterine their resting place.
 ! probably goes in the manager, possibly in gear
@@ -411,15 +407,15 @@
 
             cnw = cnew(kloop,jspc)
 
-            if (cnw > abtol(1,ncs)) then
+            if (cnw > absoluteErrorTolerance(1,ncs)) then
               kgrp(kloop,1) = kgrp(kloop,1) + 1
-            else if (cnw > abtol(2,ncs)) then
+            else if (cnw > absoluteErrorTolerance(2,ncs)) then
               kgrp(kloop,2) = kgrp(kloop,2) + 1
-            else if (cnw > abtol(3,ncs)) then
+            else if (cnw > absoluteErrorTolerance(3,ncs)) then
               kgrp(kloop,3) = kgrp(kloop,3) + 1
-            else if (cnw > abtol(4,ncs)) then
+            else if (cnw > absoluteErrorTolerance(4,ncs)) then
               kgrp(kloop,4) = kgrp(kloop,4) + 1
-            else if (cnw > abtol(5,ncs)) then
+            else if (cnw > absoluteErrorTolerance(5,ncs)) then
               kgrp(kloop,5) = kgrp(kloop,5) + 1
             end if
 
@@ -435,17 +431,17 @@
           k5 = kgrp(kloop,5) + k4
 
           if (k1 > managerObject%iabove) then
-            yabst(kloop) = abtol(1,ncs) ! MRD: these yabst should be passed in
+            yabst(kloop) = absoluteErrorTolerance(1,ncs) ! MRD: these yabst should be passed in
           else if (k2 > managerObject%iabove) then    ! does the driver pass them in?
-            yabst(kloop) = abtol(2,ncs) ! or does the mechanism specify them
+            yabst(kloop) = absoluteErrorTolerance(2,ncs) ! or does the mechanism specify them
           else if (k3 > managerObject%iabove) then    ! tabled for now
-            yabst(kloop) = abtol(3,ncs)
+            yabst(kloop) = absoluteErrorTolerance(3,ncs)
           else if (k4 > managerObject%iabove) then
-            yabst(kloop) = abtol(4,ncs)
+            yabst(kloop) = absoluteErrorTolerance(4,ncs)
           else if (k5 > managerObject%iabove) then
-            yabst(kloop) = abtol(5,ncs)
+            yabst(kloop) = absoluteErrorTolerance(5,ncs)
           else
-            yabst(kloop) = abtol(6,ncs)
+            yabst(kloop) = absoluteErrorTolerance(6,ncs)
           end if
 
         end do
@@ -464,17 +460,12 @@
       else
 !     ====
 
-      print*, "I am in else because ireord is not equal to 1", ireord
       call calculateErrorTolerances (managerObject, ktloop, jlooplo, itloop, cnew, gloss, dely, errmx2)
-      print*, "leaving smvgear"
       return
 
 !     ===============
       end if IREORDIF
 !     ===============
-
-
-   print*, "doing time step stuff"
 
       call calcInitialTimeStepSize (managerObject, ktloop, dely, delt, ncs)
 !     -----------------------
@@ -581,15 +572,15 @@
 
               cnw = cnew(kloop,jspc)
 
-              if (cnw > abtol(1,ncs)) then
+              if (cnw > absoluteErrorTolerance(1,ncs)) then
                 kgrp(kloop,1) = kgrp(kloop,1) + 1
-              else if (cnw > abtol(2,ncs)) then
+              else if (cnw > absoluteErrorTolerance(2,ncs)) then
                 kgrp(kloop,2) = kgrp(kloop,2) + 1
-              else if (cnw > abtol(3,ncs)) then
+              else if (cnw > absoluteErrorTolerance(3,ncs)) then
                 kgrp(kloop,3) = kgrp(kloop,3) + 1
-              else if (cnw > abtol(4,ncs)) then
+              else if (cnw > absoluteErrorTolerance(4,ncs)) then
                 kgrp(kloop,4) = kgrp(kloop,4) + 1
-              else if (cnw > abtol(5,ncs)) then
+              else if (cnw > absoluteErrorTolerance(5,ncs)) then
                 kgrp(kloop,5) = kgrp(kloop,5) + 1
               end if
 
@@ -605,17 +596,17 @@
             k5 = kgrp(kloop,5) + k4
 
             if (k1 > managerObject%iabove) then
-              yabst(kloop) = abtol(1,ncs)
+              yabst(kloop) = absoluteErrorTolerance(1,ncs)
             else if (k2 > managerObject%iabove) then
-              yabst(kloop) = abtol(2,ncs)
+              yabst(kloop) = absoluteErrorTolerance(2,ncs)
             else if (k3 > managerObject%iabove) then
-              yabst(kloop) = abtol(3,ncs)
+              yabst(kloop) = absoluteErrorTolerance(3,ncs)
             else if (k4 > managerObject%iabove) then
-              yabst(kloop) = abtol(4,ncs)
+              yabst(kloop) = absoluteErrorTolerance(4,ncs)
             else if (k5 > managerObject%iabove) then
-              yabst(kloop) = abtol(5,ncs)
+              yabst(kloop) = absoluteErrorTolerance(5,ncs)
             else
-              yabst(kloop) = abtol(6,ncs)
+              yabst(kloop) = absoluteErrorTolerance(6,ncs)
             end if
 
           end do
@@ -736,13 +727,12 @@
          print*, "re-evalulate predictor matrix"
 
          r1delt = -managerObject%asn1 * delt
-         nondiag  = iarray(ncsp) - managerObject%num1stOEqnsSolve ! iarray is in common block
+         nondiag  = sparseMatrixDimension(ncsp) - managerObject%num1stOEqnsSolve
 
-         call calculateTermOfJacobian (mechanismObject, cnew, urate, ioner(ncsp))
+         call calculateTermOfJacobian (mechanismObject, cnew, urate, numRxnsOneActiveReactant(ncsp))
 
          managerObject%numCallsPredict  = managerObject%numCallsPredict + 1
-         ! MRD: iarray, npdhi, and npdlo are in common blocks
-         call calculatePredictor (nondiag, iarray(ncsp), mechanismObject%numGridCellsInBlock, &
+         call calculatePredictor (nondiag, sparseMatrixDimension(ncsp), mechanismObject%numGridCellsInBlock, &
             &  npdhi(ncsp), npdlo(ncsp), r1delt, urate, cc2)
 
          ! MRD: End block of code that was in Pderiv
@@ -778,7 +768,6 @@
 !     ========
 
       print*, "in 300, evaluating first derivative"
-
       call velocity (mechanismObject, managerObject%num1stOEqnsSolve, ncsp, cnew, gloss, trate, nfdh1)
       managerObject%numCallsVelocity = managerObject%numCallsVelocity + 1
 
@@ -964,7 +953,7 @@
 !     ==============================
       DER2MAXIF: if (managerObject%der2max > managerObject%enqq) then
 !     ==============================
-      print*, "der2max > enqq"
+         print*, "der2max > enqq"
         managerObject%xelaps = managerObject%told
         managerObject%numFailErrorTest  = managerObject%numFailErrorTest + 1
         managerObject%jFail  = managerObject%jFail  + 1
@@ -1093,7 +1082,7 @@
 
           i1 = i1 + managerObject%num1stOEqnsSolve
 
-          asnqqj = aset(managerObject%nqq,j)
+          asnqqj = coeffsForIntegrationOrder(managerObject%nqq,j)
 
           do jspc = 1, managerObject%num1stOEqnsSolve
 
@@ -1306,7 +1295,7 @@ print*, "update chemistry mass balance"
 !     -------------------------------------------------------------------
 
         real_kstep = managerObject%kstep
-        consmult   = aset(managerObject%nqq,managerObject%kstep) / real_kstep
+        consmult   = coeffsForIntegrationOrder(managerObject%nqq,managerObject%kstep) / real_kstep
         managerObject%nqq        = managerObject%kstep
         nqisc      = managerObject%nqq * managerObject%num1stOEqnsSolve
 
@@ -1395,10 +1384,10 @@ print*, "update chemistry mass balance"
       subroutine Backsub  &
      &  (num1stOEqnsSolve, ktloop, ncsp, cc2, vdiag, gloss)
 
+      use Smv2Chem2_mod
       implicit none
 
 #     include "smv2chem_par.h"
-#     include "smv2chem2.h"
 
 
 !     ----------------------
@@ -1775,7 +1764,7 @@ print*, "update chemistry mass balance"
 !   ktloop : # of grid-cells in a grid-block
 !   ncsp   : ncs       => for daytime   gas chemistry
 !            ncs + ICS => for nighttime gas chemistry
-!   cc2    : array of iarray units holding values of each matrix
+!   cc2    : array of sparseMatrixDimension units holding values of each matrix
 !            position actually used; originally,
 !            cc2 = P = I - delt * aset(nqq,1) * partial_derivatives;
 !            however, cc2 is decomposed here
@@ -1786,10 +1775,10 @@ print*, "update chemistry mass balance"
       subroutine Decomp  &
      &  (num1stOEqnsSolve, ktloop, ncsp, cc2, vdiag)
 
+      use Smv2Chem2_mod
       implicit none
 
 #     include "smv2chem_par.h"
-#     include "smv2chem2.h"
 
 
 !     ----------------------
@@ -1968,7 +1957,7 @@ print*, "update chemistry mass balance"
         end do IJTLOOP
 !       ==============
 
-        iar = jarrdiag(j,ncsp)
+        iar = diagonalTermDecomp(j,ncsp)
 
         do k = 1, ktloop
           vdiag(k,j) = 1.0d0 / cc2(k,iar)
@@ -2029,11 +2018,10 @@ print*, "update chemistry mass balance"
 
       subroutine Update  &
      &  (ktloop, nallr, ncs, ncsp, jphotrat, pratk1, rrate, trate)
-
+      use Smv2Chem2_mod
       implicit none
 
 #     include "smv2chem_par.h"
-#     include "smv2chem2.h"
 
 
 !     ----------------------
@@ -2089,7 +2077,7 @@ print*, "update chemistry mass balance"
       do i = 1, nolosp(ncsp)
 
         nk  = nknlosp(i,ncs)
-        nkn = newfold(nk,ncs)
+        nkn = newRxnRateNumber(nk,ncs)
         nh  = nkn + nallr
 
         do kloop = 1, ktloop

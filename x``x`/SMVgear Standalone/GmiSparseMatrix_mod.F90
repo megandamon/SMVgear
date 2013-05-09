@@ -4,7 +4,6 @@ module GmiSparseMatrix_mod
    private
 
 #     include "smv2chem_par.h"
-#     include "smv2chem2.h"
 
    public :: calculatePredictor
    public :: SparseMatrix_type
@@ -50,6 +49,7 @@ contains
       subroutine calculatePredictor (nondiag, iarry, numGridCellsInBlock, &
       & npdh, npdl, r1delt, jacobian, predictor)
 
+      use Smv2Chem2_mod
       implicit none
 
 !     ----------------------

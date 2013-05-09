@@ -650,6 +650,7 @@
       real*8  :: urate (KBLOOP, NMTRATE, 3) = 0.0d0
 
       character(len=128) :: smvgear_cell_id
+
 !     ===============================
 !$    integer :: Omp_Get_Max_Threads
 !$    integer :: Omp_Get_Num_Threads
@@ -665,7 +666,6 @@
 !c    real*8  :: ctime(MXBLOCK)
 !c    real*8  :: sumtime(0:15)
 !     =========================
-
 
 !     ----------------
 !     Begin execution.
@@ -776,6 +776,7 @@
           write(smvgear_cell_id,100) "SmvgCell_",kblk,"ird_",ireord
   100     format(a,i4.4,a,i1)
           call timingOn(trim(smvgear_cell_id))
+
 !         ============
           call Smvgear  &
 !         ============
@@ -891,10 +892,10 @@
      &   cblk, rrate, trate, nallr, nfdh1, nfdh2, nfdh3, nfdl1, nfdl2,  &
      &   nfdrep, nfdrep1, irma, irmb, irmc, corig, smvdm)
 
+      use Smv2Chem2_mod
       implicit none
 
 #     include "smv2chem_par.h"
-#     include "smv2chem2.h"
 
 
 !     ----------------------
@@ -968,10 +969,9 @@
 !     -------------------------------------------------------------------
 !     Place large domain gas array (molec/cm^3) into smaller block array.
 !     -------------------------------------------------------------------
-
       do jold = 1, numActInActGases(gasChemistryType)
 
-        jnew = mappl(jold,gasChemistryType)
+        jnew = origSpcToReordSpcMap(jold,gasChemistryType)
 
         do kloop = 1, ktloop
 
@@ -994,26 +994,27 @@
       end do
 
 
+
 !     ------------------------------------------------------
 !     Multiply rates by constant species concentrations
 !     (either M, O2, N2, or any active or inactive species).
 !     ------------------------------------------------------
 
-      do i = 1, nmair(gasChemistryType)
+      do i = 1, numRxns3rdSpcO2plusN2(gasChemistryType)
         nk = nreacair(i,gasChemistryType)
         do kloop = 1, ktloop
            rrate(kloop,nk) = rrate(kloop,nk) * denair(kloop)
         end do
       end do
 
-      do i = 1, nmo2(gasChemistryType)
+      do i = 1, numRxns3rdSpcO2(gasChemistryType)
         nk = nreaco2(i,gasChemistryType)
         do kloop = 1, ktloop
           rrate(kloop,nk) = rrate(kloop,nk) * conco2(kloop)
         end do
       end do
 
-      do i = 1, nmn2(gasChemistryType)
+      do i = 1, numRxns3rdSpcN2(gasChemistryType)
         nk = nreacn2(i,gasChemistryType)
         do kloop = 1, ktloop
           rrate(kloop,nk) = rrate(kloop,nk) * concn2(kloop)
@@ -1053,21 +1054,21 @@
 !     Reorder rrate array.
 !     --------------------
 
-      nfdh3   = ithrr(gasChemistryType)
+      nfdh3   = numRxnsThreeActiveReactant(gasChemistryType)
       nfdl2   = nfdh3  + 1
-      nfdrep  = inorep(gasChemistryType)
+      nfdrep  = lastReorderedRxn(gasChemistryType)
       nfdrep1 = nfdrep + 1
-      nfdh2   = nfdh3  + itwor(gasChemistryType)
+      nfdh2   = nfdh3  + numRxnsTwoActiveReactant(gasChemistryType)
       nfdl1   = nfdh2  + 1
-      nfdh1   = nfdh2  + ioner(gasChemistryType)
+      nfdh1   = nfdh2  + numRxnsOneActiveReactant(gasChemistryType)
       nfdl0   = nfdh1  + 1
       nallr   = nallrat(gasChemistryType)
 
       do nkn = 1, nallr
-        nk = noldfnew(nkn,gasChemistryType)
-        irma(nkn) = irm2(1,nk,gasChemistryType)
-        irmb(nkn) = irm2(2,nk,gasChemistryType)
-        irmc(nkn) = irm2(3,nk,gasChemistryType)
+        nk = oldRxnRateNum(nkn,gasChemistryType)
+        irma(nkn) = newSpcNumActiveProduct(1,nk,gasChemistryType)
+        irmb(nkn) = newSpcNumActiveProduct(2,nk,gasChemistryType)
+        irmc(nkn) = newSpcNumActiveProduct(3,nk,gasChemistryType)
       end do
 
 
@@ -1075,14 +1076,14 @@
 !     trate here used as a dummy array.
 !     ---------------------------------
 
-      do nk = 1, ntrates(gasChemistryType)
+      do nk = 1, numKinPhotoRxns(gasChemistryType)
         do kloop = 1, ktloop
           trate(kloop,nk) = rrate(kloop,nk)
         end do
       end do
 
       do nkn = 1, nallr
-        nk = noldfnew(nkn,gasChemistryType)
+        nk = oldRxnRateNum(nkn,gasChemistryType)
         do kloop = 1, ktloop
           rrate(kloop,nkn) = trate(kloop,nk)
         end do

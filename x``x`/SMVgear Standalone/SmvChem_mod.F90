@@ -4,8 +4,6 @@ module SmvChem_mod
    private
 
 #     include "smv2chem_par.h"
-#     include "smv2chem2.h"
-#     include "smv2chem1.h"
 
    public :: SmvChem_type
    public :: deallocateVariables
@@ -23,7 +21,7 @@ module SmvChem_mod
          real*8, allocatable :: qkGmi(:, :, :, :)
          real*8, allocatable :: yda  (:, :, :, :)
          logical, allocatable  :: doCellChem(:)
-         real*8, allocatable :: thermalRateConstants(:, :) ! units vary
+         real*8, allocatable :: thermalRateConstants(:, :) ! units vary (inverse conc squared, cubed, etc.? )
          real*8, allocatable :: photolysisRateConstants(:, :) ! s^-1
          real*8, allocatable :: surfaceEmissions(:, :) ! molec/cm^3/s
          real*8, allocatable :: speciesConst(:, :) ! molec/cm^3
@@ -119,6 +117,9 @@ module SmvChem_mod
          read(fileNumber,'(a)')
          read(fileNumber,*) this%surfaceEmissions(1:this%numLat*this%numLong, 1:IGAS)
          read(fileNumber,'(a)')
+         ! check that species const is being read in correctly
+
+         !read(fileNumber,*) this%speciesConst(:,:)
          read(fileNumber,*) this%speciesConst(1:this%numZones, 1:IGAS)
 
          close(fileNumber)
