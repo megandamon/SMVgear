@@ -65,10 +65,13 @@
 !       parameter  (MXBLOCK  =  30)
 !     -------------------------------------------------------------
 
-        integer, parameter :: KBLOOP   =  1
-        integer, parameter :: KULOOPIN =  1
-        integer, parameter :: MXBLOCK  = 10000
+!integer, parameter :: KBLOOP   =  1
+!integer, parameter :: KULOOPIN =  1
+!integer, parameter :: MXBLOCK  = 10000
 
+		integer, parameter :: KBLOOP = BLOCKSIZE
+		integer, parameter :: KULOOPIN = BLOCKSIZE
+		integer, parameter :: MXBLOCK = 7000
       integer, parameter ::  &
      &  MAXORD   =  5,    & ! max allowable order of integration method
      &  MBETWEEN = 50   ! max allowable # steps between calls to Pderiv

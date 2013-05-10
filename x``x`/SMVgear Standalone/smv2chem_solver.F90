@@ -39,7 +39,8 @@
 !     &   i1, i2, ju1, j2, k1, k2, &
 !     &   num_qjo, num_qks, num_qjs, num_active)
 
-      use timing_mod
+		use ChemTable_mod
+      !use timing_mod
       implicit none
 
 #     include "smv2chem_par.h"
@@ -99,20 +100,19 @@
       character(len=100) :: physProcExit
 
       character(len=128) :: tempText
-
+		real*8 :: MassInit,MassFin
+		integer :: Tinit, Tfin, Tclockrate
 !     ----------------
 !     Begin execution.
 !     ----------------
 
 !      call MPI_Comm_rank(MPI_COMM_WORLD,rank,err)
-      call timingInit
+      !call timingInit
 
       rank = 17
-      if (prDiag) then
-        Write (6,*) 'doSmv2Solver called by ', localProc
-      end if
 
-      print*, "Writing to: ", smv2Chem1Entry
+      Write (6,*) 'doSmv2Solver called'
+
 
       write(smv2Chem1Entry,1001) rank
  1001 format('smv2chem1_entry.proc',i4.4)
@@ -486,7 +486,7 @@
 
 
     print*, "read from: ", trim(physProcEntry), " prDiag = ", prDiag
-    prDiag = 1
+    !prDiag = 1
 
 !     ==========
       if (first) then
@@ -510,9 +510,17 @@
 
       errorMx2  (:) = 0.0d0
 
-      print*, "prDiag: ", prDiag
+      !print*, "prDiag: ", prDiag
 
-      call timingOn("Physproc")
+		
+		MassInit = sum(speciesConst)
+		call CalcTabl(GenChem,1,1,1)
+
+		kuloop = BLOCKSIZE
+		ifreord = DOREORD
+
+		Call system_clock(Tinit)
+      !call timingOn("Physproc")
 !     =============
       call physProc  &
 !     =============
@@ -526,9 +534,10 @@
      &   i1, i2, ju1, j2, k1, k2, &
      &   numQjo, numQks, numQjs, numActive)
 
-      call timingOff("Physproc")
-
+      !call timingOff("Physproc")
+		Call system_clock(Tfin,Tclockrate)
 !dump smv2chem1 on exit from physproc to be used for standAlone code
+#ifdef PRINTEXIT
       open(file=trim(smv2Chem1Exit),unit=24,form="formatted")
       write(24,*) "ifreord   "
       write(24,*) ifreord
@@ -880,6 +889,17 @@
       close(26)
       close(27)
       close(28)
+#endif
+		open(file=trim("cxfin"),unit=30,form="formatted")
+		write(30,*) "cx(itloop,IGAS) = ", numZones, " by ", IGAS
+		do i1=1,numZones
+			write(30,*) "Cell: ",i1, "Max/Min = ",log10(maxval(speciesConst(i1,:))), &
+			& "/",log10(minval(speciesConst(i1,:)))
+			write(30,'(es22.15)') speciesConst(i1,:)
+		end do
+		close(30)
+
+		MassFin = sum(speciesConst)
 
       deallocate (jReOrder)
       deallocate (lReOrder)
@@ -897,7 +917,20 @@
 
    !   call timingPrint
 
+		!call PrintChem(GenChem)
       print*, "Exiting doSmv2Solver"
+		Write(*,*) 'Relative mass change = ', (MassFin-MassInit)/MassInit
+		Write(*,*) 'Reordering = ', ifreord
+		Write(*,*) 'Blocksize = ', kuloop
+
+		Print '(" Time taken = ", f9.6, " seconds.")', Real(Tfin-Tinit)/Real(Tclockrate)
+
+		!K: Species 61 info
+		write(*,*) 'Species 61:'
+		write(*,*) '82 - > ', inewold(82,1)
+		write(*,*) 'Inputs = ', count(GenChem%RxnIn==82)
+		write(*,*) 'Outputs = ', count(GenChem%RxnOut==82)
+		write(*,*) 'Frac-Out = ', count(GenChem%FracRxnOut==82)
 
       end program doSmv2Solver
 
