@@ -14,6 +14,7 @@
       use SmvChem_mod
       use Smv2Chem1_mod
       use Smv2Chem2_mod
+		use ChemTable_mod
 
       implicit none
       external testFailOnPurpose
@@ -22,28 +23,32 @@
 #     include "smv2chem_par.h"
 
       logical, save :: first = .true.
-      integer :: rank,errorInt
+      integer :: Tinit, Tfin, Tclockrate
+      integer :: rank,errorInt, iCell
       integer, allocatable :: jReOrder(:)
       integer, allocatable :: lReOrder(:)
       real*8, allocatable  :: errorMx2  (:)
       real*8, allocatable, save :: cSumA(:)
       real*8, allocatable, save :: cSumB(:)
+      real*8 :: MassInit,MassFin
       character(len=100) :: smv2Chem1Entry
       character(len=100) :: smv2Chem1Exit
       character(len=100) :: smv2Chem2Entry
       character(len=100) :: smv2Chem2Exit
       character(len=100) :: physProcEntry
       character(len=100) :: physProcExit
+      character(len=100) :: summary_statement
+      character(len=128) :: tempText
       type (SmvChem_type) :: chemObject
       type (Smv2Chem1_type) :: smv2chem1Object
       type (TestSuite_type) :: suite
       type (TestResult_type) :: result
-      character(len=100) :: summary_statement
 
+      !call MPI_Comm_rank(MPI_COMM_WORLD,rank,err)
+      !call timingInit
       call pFUnit_init()
 
-!      call MPI_Comm_rank(MPI_COMM_WORLD,rank,err)
-      call timingInit
+      chemObject%prDiag = .true.
 
       rank = 17
       if (chemObject%prDiag) then
@@ -67,14 +72,11 @@
       call readSmv2Chem2Entry (smv2Chem2Entry)
       call readPhysProc (chemObject, physProcEntry)
 
-      print*, "read from: ", trim(physProcEntry), " prDiag = ", chemObject%prDiag
-      chemObject%prDiag = 1
-
       if (first) then
          first = .false.
-        Allocate (cSumA(chemObject%numZones))
-        Allocate (cSumB(chemObject%numZones))
-        cSumA = 0.0d0; cSumB = 0.0d0
+         Allocate (cSumA(chemObject%numZones))
+         Allocate (cSumB(chemObject%numZones))
+         cSumA = 0.0d0; cSumB = 0.0d0
       end if
 
       allocate (jReOrder(chemObject%numZones))
@@ -86,9 +88,15 @@
       suite = TestSuite('smvgear tests')
       call add(suite, TestCase1Step('testFailOnPurpose', testFailOnPurpose))
 
+      MassInit = sum(chemObject%speciesConst)
+      call CalcTabl(GenChem,1,1,1)
 
+      smv2chem1Object%intendedNumGridCellsInBlock = BLOCKSIZE
+      smv2chem1Object%reorderGridCellsStiffness = DOREORD
 
-      call timingOn("Physproc")
+      Call system_clock(Tinit)
+      !call timingOn("Physproc")
+
       call physProc  &
      &  (chemObject%doQqjkInchem, chemObject%doSurfEmissInChem, chemObject%prQqjk, &
      &   chemObject%prSmv2, chemObject%numLat,  &
@@ -107,8 +115,10 @@
      &   cSumB, errorMx2, chemObject%speciesConst, &
      &   chemObject%yda, chemObject%qqkda, chemObject%qqjda, chemObject%qkGmi, chemObject%qjGmi, &
      &   chemObject%i1, chemObject%i2, chemObject%ju1, chemObject%j2, chemObject%k1, chemObject%k2, &
-     &   chemObject%numQjo, chemObject%numQks, chemObject%numQjs, chemObject%numActive)
-      call timingOff("Physproc")
+     &   chemObject%numQjo, chemObject%numQks, chemObject%numQjs, chemObject%numActive, chemObject%prDiag)
+
+      !call timingOff("Physproc")
+      Call system_clock(Tfin,Tclockrate)
 
       !call add(suite, TestCase1Step('testSpeciesConst'), testSpeciesConst, chemObject%speciesConst(1,1), 1077508322.73440)
       !speciesConst(1,1):   1077508322.73440
@@ -117,9 +127,37 @@
       ! regression testing area
       call writeSmv2Chem1Exit (smv2Chem1Exit, smv2Chem1Object)
       call writeSmv2Chem2Exit (smv2Chem2Exit)
-      call writePhysProc (chemObject, physProcEntry)
+      call writePhysProc (chemObject, physProcExit)
 
-      deallocate (jReOrder)
+		open(file=trim("cxfin"),unit=30,form="formatted")
+		write(30,*) "cx(itloop,IGAS) = ", chemObject%numZones, " by ", IGAS
+		do iCell=1,chemObject%numZones
+			write(30,*) "Cell: ",iCell, "Max/Min = ",log10(maxval(chemObject%speciesConst(iCell,:))), &
+			& "/",log10(minval(chemObject%speciesConst(iCell,:)))
+			write(30,'(es22.15)') chemObject%speciesConst(iCell,:)
+		end do
+		close(30)
+
+		MassFin = sum(chemObject%speciesConst)
+
+		Write(*,*) 'Relative mass change = ', (MassFin-MassInit)/MassInit
+      Write(*,*) 'Reordering = ', smv2chem1Object%reorderGridCellsStiffness
+      Write(*,*) 'Blocksize = ', smv2chem1Object%intendedNumGridCellsInBlock
+      Write(*,*) '(" Time taken = ", f9.6, " seconds.")', Real(Tfin-Tinit)/Real(Tclockrate)
+		write(*,*) 'Species 61:'
+		write(*,*) '82 - > ', smv2chem1Object%inewold(82,1)
+		write(*,*) 'Inputs = ', count(GenChem%RxnIn==82)
+		write(*,*) 'Outputs = ', count(GenChem%RxnOut==82)
+      write(*,*) 'Frac-Out = ', count(GenChem%FracRxnOut==82)
+
+
+      ! Run the tests and accumulate the results in "result"
+      result = newTestResult(mode=MODE_USE_STDOUT)
+      call Run(suite, result)
+      summary_statement=Summary(result)
+      print*,trim(summary_statement)
+
+		deallocate (jReOrder)
       deallocate (lReOrder)
       deallocate (errorMx2)
       deallocate (smv2chem1Object%jphotrat)
@@ -129,20 +167,12 @@
       deallocate (smv2chem1Object%inewold)
       deallocate (smv2chem1Object%npphotrat)
 
-
       call deallocateVariables(chemObject)
 
-      ! Run the tests and accumulate the results in "result"
-      result = newTestResult(mode=MODE_USE_STDOUT)
-      call Run(suite, result)
-      summary_statement=Summary(result)
-      print*,trim(summary_statement)
-
-      call clean(result)
+	   call clean(result)
       call clean(suite)
       call pFUnit_finalize()
 
-      ! call timingPrint
       print*, "Exiting doSmv2Solver"
 
    end program doSmv2Solver

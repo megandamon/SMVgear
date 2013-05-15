@@ -25,7 +25,7 @@ module GmiMechanism_mod
                      ! two active reactants that are not
                        ! followed by a rxn with the same reactant
        integer :: numActiveReactants ! CHECK WITH TOM
-       ! spc # of each reactant; locates reordered active spc #s
+		 !K: These arrays should be removed as they're in ChemTable now
        integer :: speciesNumberA    (NMTRATE)
        integer :: speciesNumberB    (NMTRATE)
        integer :: speciesNumberC    (NMTRATE)
@@ -43,8 +43,6 @@ module GmiMechanism_mod
     end type Mechanism_type
 
 contains
-
-
 
 !-----------------------------------------------------------------------------
 !
@@ -75,7 +73,6 @@ contains
          this%numRxns3Drep = nfdrep
 
       end subroutine initializeMechanism
-
 
 !-----------------------------------------------------------------------------
 !
@@ -121,8 +118,6 @@ contains
 
          integer :: kloop, jspc, jgas
          integer :: ibcb(IGAS)
-
-         Write (6,*) 'setBoundaryConditions called'
 
          do kloop = 1, this%numGridCellsInBlock
             if (jreorder(jlooplo+kloop) <= (ilat*ilong)) then
@@ -181,278 +176,111 @@ contains
 ! MRD: Subfun, which will part of the mechanism, needs to know sparseMatrix things.
 ! MRD: Subfun is similiar to Flow, in SmvgearTDD (or y dot, or velocity)
 
-      subroutine velocity (this, ischan, ncsp, concentrationsNew, &
-                        gloss, reactionRates, nfdh1)
+		subroutine velocity (this,ischan,ncsp,cx,gloss,nfdh1)
 
-      use Smv2Chem2_mod
-      implicit none
+		use ChemTable_mod
+		implicit none
 
-#     include "smv2chem_par.h"
-
-!     ----------------------
-!     Argument declarations.
-!     ----------------------
       type (Mechanism_type) :: this
       integer, intent(in)  :: ischan ! derived from common block
       integer, intent(in)  :: ncsp   ! derived from common block
-      real*8,  intent(in)  :: concentrationsNew (KBLOOP, MXGSAER)
-      real*8,  intent(inout) :: gloss(KBLOOP, MXGSAER)
-      real*8,  intent(inout) :: reactionRates(KBLOOP, NMTRATE*2) ! production and loss are seperate reactions
+      real*8,  intent(in)  :: cx (KBLOOP, MXGSAER)
+      real*8,  intent(out) :: gloss(KBLOOP, MXGSAER)
       integer, intent(out) :: nfdh1
 
-
-!     ----------------------
-!     Variable declarations.
-!     ----------------------
-
-      integer ::  ja, jb, jc
-      integer ::  jspc
-      integer ::  k
-      integer ::  n, nc, nh
-      integer ::  nh1, nh2, nh3, nh4, nh5
-      integer ::  nk0, nk1, nk2
-      integer ::  nk3, nk4, nkn
-      integer ::  nl1, nl2, nl3, nl4, nl5
-      integer ::  npl
-
-!     -----------------------------------------------------------------------
-!     concmult : product of concs in a rate; if two consecutive rxns have the
-!                same spc reacting (e.g., A + B --> C and A + B --> D + E),
-!                then use the same value for both rxns
-!     -----------------------------------------------------------------------
-
-      real*8  :: concmult
-      real*8  :: fracn
-
-!     ----------------
-!     Begin execution.
-!     ----------------
-
-!     Write (6,*) 'velocity called.'
-
-!     ----------------------
-!     Set rates of reaction.
-!     ----------------------
-      nfdh1   = this%numRxns2 + numRxnsOneActiveReactant(ncsp)
-
-!     ---------------------------------------------------------
-!     First derivatives for rates with three active loss terms.
-!     ---------------------------------------------------------
-      do nkn = 1, this%numRxns3
-
-        ja = this%speciesNumberA(nkn)
-        jb = this%speciesNumberB(nkn)
-        jc = this%speciesNumberC(nkn)
-
-        nh = nkn + this%numActiveReactants
-
-        do k = 1, this%numGridCellsInBlock
-          reactionRates(k,nkn) =  this%rateConstants(k,nkn) * &
-               & concentrationsNew(k,ja) * concentrationsNew(k,jb) * &
-               & concentrationsNew(k,jc)
-          reactionRates(k,nh)  = -reactionRates(k,nkn) !MRD: species d goes up
-        end do
-
-      end do
-
-!     -------------------------------------------------------
-!     First derivatives for rates with two active loss terms.
-!     -------------------------------------------------------
-      do nkn = this%numRxns3 + 1, this%numRxns3Drep
-
-        ja = this%speciesNumberA(nkn)
-        jb = this%speciesNumberB(nkn)
-
-        nh = nkn + this%numActiveReactants
-
-        do k = 1, this%numGridCellsInBlock
-          reactionRates(k,nkn) = this%rateConstants(k,nkn) * &
-               & concentrationsNew(k,ja) * concentrationsNew(k,jb)
-          reactionRates(k,nh)  = -reactionRates(k,nkn)
-        end do
-
-      end do
-
-!     -----------------------------------------------------------
-!     First derivatives for rates with two active loss terms and
-!     where the subsequent reaction has the same reactants, but a
-!     different rate.
-!     -----------------------------------------------------------
-
-      do nkn = this%numRxns3Drep + 1, this%numRxns2, 2
-
-        ja  = this%speciesNumberA(nkn)
-        jb  = this%speciesNumberB(nkn)
-
-        nk2 = nkn + 1
-        nh  = nkn + this%numActiveReactants
-        nh2 = nk2 + this%numActiveReactants
-
-        do k = 1, this%numGridCellsInBlock
-          concmult  =  concentrationsNew(k,ja) * concentrationsNew(k,jb)
-          reactionRates(k,nkn) =  this%rateConstants(k,nkn) * concmult
-          reactionRates(k,nk2) =  this%rateConstants(k,nk2) * concmult
-          reactionRates(k,nh)  = -reactionRates(k,nkn)
-          reactionRates(k,nh2) = -reactionRates(k,nk2)
-        end do
-
-      end do
-
-!     ------------------------------------------------------
-!     First derivatives for rates with one active loss term.
-!     ------------------------------------------------------
-      do nkn = this%numRxns2 + 1, nfdh1
-
-        ja = this%speciesNumberA(nkn)
-
-        nh = nkn + this%numActiveReactants
-
-        do k = 1, this%numGridCellsInBlock
-          reactionRates(k,nkn) =  this%rateConstants(k,nkn) * concentrationsNew(k,ja)
-          reactionRates(k,nh)  = -reactionRates(k,nkn)
-        end do
-
-      end do
-
-!     --------------------------------
-!     Initialize first derivative = 0.
-!     --------------------------------
-      gloss(1:this%numGridCellsInBlock,1:ischan) = 0.0d0
-
-!     ---------------------------------------------------------------
-!     Sum net (not reproduced) kinetic and photo gains and losses for
-!     each species.
-!
-!     Sum 1,2,3,4, or 5 terms at a time to improve vectorization.
-!     ---------------------------------------------------------------
-!     ==========================================
-      NPLLOOP: do npl = npllo(ncsp), nplhi(ncsp)
-!     ==========================================
-        ! MRD: these arrays should be part of sparseMatrix
-        jspc = jspnpl(npl)
-
-        nl5 = npl5(npl)
-        nh5 = nph5(npl)
-        nl4 = npl4(npl)
-        nh4 = nph4(npl)
-        nl3 = npl3(npl)
-        nh3 = nph3(npl)
-        nl2 = npl2(npl)
-        nh2 = nph2(npl)
-        nl1 = npl1(npl)
-        nh1 = nph1(npl)
-
-!       -- Sum 5 terms at a time. --
-
-        do nc = nl5, nh5
-
-          ! MRD: this is an out dated (unnecessary?) optimization
-          nk0 = reOrderedRxnRateEachLossA(nc)
-          nk1 = reOrderedRxnRateEachLossB(nc)
-          nk2 = reOrderedRxnRateEachLossC(nc)
-          nk3 = reOrderedRxnRateEachLossD(nc)
-          nk4 = reOrderedRxnRateEachLossE(nc)
-
-          ! up to five species
-          do k = 1, this%numGridCellsInBlock
-            gloss(k,jspc) =  &
-     &        gloss(k,jspc) -  &
-     &        reactionRates(k,nk0)  - reactionRates(k,nk1) - reactionRates(k,nk2) -  &
-     &        reactionRates(k,nk3)  - reactionRates(k,nk4)
-          end do
-
-        end do
-
-!       -- Sum 4 terms at a time. --
-
-        do nc = nl4, nh4
-
-          ! MRD: this is an out dated (unnecessary?) optimization
-          nk0 = reOrderedRxnRateEachLossA(nc)
-          nk1 = reOrderedRxnRateEachLossB(nc)
-          nk2 = reOrderedRxnRateEachLossC(nc)
-          nk3 = reOrderedRxnRateEachLossD(nc)
-
-          do k = 1, this%numGridCellsInBlock
-            gloss(k,jspc) =  &
-     &        gloss(k,jspc) -  &
-     &        reactionRates(k,nk0)  - reactionRates(k,nk1) - reactionRates(k,nk2) -  &
-     &        reactionRates(k,nk3)
-          end do
-
-        end do
-
-!       -- Sum 3 terms at a time. --
-
-        do nc = nl3, nh3
-
-          nk0 = reOrderedRxnRateEachLossA(nc)
-          nk1 = reOrderedRxnRateEachLossB(nc)
-          nk2 = reOrderedRxnRateEachLossC(nc)
-
-          do k = 1, this%numGridCellsInBlock
-            gloss(k,jspc) =  &
-     &        gloss(k,jspc) -  &
-     &        reactionRates(k,nk0)  - reactionRates(k,nk1)  - reactionRates(k,nk2)
-          end do
-
-        end do
-
-!       -- Sum 2 terms at a time. --
-
-        do nc = nl2, nh2
-
-          nk0 = reOrderedRxnRateEachLossA(nc)
-          nk1 = reOrderedRxnRateEachLossB(nc)
-
-          do k = 1, this%numGridCellsInBlock
-            gloss(k,jspc) =  &
-     &        gloss(k,jspc) -  &
-     &        reactionRates(k,nk0)  - reactionRates(k,nk1)
-          end do
-
-        end do
-
-!       -- Sum 1 term at a time. --
-
-        do nc = nl1, nh1
-
-          nk0 = reOrderedRxnRateEachLossA(nc)
-
-          do k = 1, this%numGridCellsInBlock
-            gloss(k,jspc) =  &
-     &        gloss(k,jspc) -  &
-     &        reactionRates(k,nk0)
-          end do
-
-        end do
-
-!     ==============
-      end do NPLLOOP
-!     ==============
-
-
-!     --------------------------------------------------------------
-!     Sum production term for reactions where products fractionated.
-!     --------------------------------------------------------------
-
-      do n = nfrlo(ncsp), nfrhi(ncsp)
-
-        jspc  = jspcnfr(n)
-        nkn   = nknfr  (n)
-        fracn = fracnfr(n)
-
-        do k = 1, this%numGridCellsInBlock
-          gloss(k,jspc) = gloss(k,jspc) + (fracn * reactionRates(k,nkn))
-        end do
-
-      end do
-
-      return
-
-      end subroutine velocity
-
-
+		integer :: i,j,k,spcnum,nf,ktloop,nin,ina,inb,inc
+		integer :: nout, outa,outb,outc,outd
+		real*8 :: frac,Rx(KBLOOP)
+
+		ktloop = this%numGridCellsInBlock
+
+		nf = 0
+		gloss = 0.0
+
+		!K: Why does this need to be sent back out?
+		nfdh1 = GenChem%nfdh1 
+
+
+		do i=1,Nrxn
+			nin = GenChem%RxnNumIn(i)
+			select case (nin)
+				case(2)
+					ina = GenChem%RxnIn(1,i)
+					inb = GenChem%RxnIn(2,i)
+					do k=1,ktloop
+						Rx(k) = this%rateConstants(k,i)*cx(k,ina)*cx(k,inb)	
+						gloss(k,ina) = gloss(k,ina) - Rx(k)
+						gloss(k,inb) = gloss(k,inb) - Rx(k)
+					end do
+				case(1)
+					ina = GenChem%RxnIn(1,i)
+					do k=1,ktloop
+						Rx(k) = this%rateConstants(k,i)*cx(k,ina)
+						gloss(k,ina) = gloss(k,ina) - Rx(k)
+					end do
+				case(0)
+					do k=1,ktloop
+						Rx(k) = this%rateConstants(k,i)
+					end do
+				case(3)
+					ina = GenChem%RxnIn(1,i)
+					inb = GenChem%RxnIn(2,i)
+					inc = GenChem%RxnIn(3,i)
+					do k=1,ktloop
+						Rx(k) = this%rateConstants(k,i)*cx(k,ina)*cx(k,inb)*cx(k,inc)
+						gloss(k,ina) = gloss(k,ina) - Rx(k)
+						gloss(k,inb) = gloss(k,inb) - Rx(k)
+						gloss(k,inc) = gloss(k,inc) - Rx(k)
+					end do
+			end select
+
+			nout = GenChem%RxnNumOut(i)
+			select case (nout)
+				case(2)
+					outa = GenChem%RxnOut(1,i)
+					outb = GenChem%RxnOut(2,i)
+					do k=1,ktloop
+						gloss(k,outa) = gloss(k,outa) + Rx(k)	
+						gloss(k,outb) = gloss(k,outb) + Rx(k)
+					end do
+				case(1)
+					outa = GenChem%RxnOut(1,i)
+					do k=1,ktloop
+						gloss(k,outa) = gloss(k,outa) + Rx(k)	
+					end do
+
+				case(3)
+					outa = GenChem%RxnOut(1,i)
+					outb = GenChem%RxnOut(2,i)
+					outc = GenChem%RxnOut(3,i)
+					do k=1,ktloop
+						gloss(k,outa) = gloss(k,outa) + Rx(k)	
+						gloss(k,outb) = gloss(k,outb) + Rx(k)
+						gloss(k,outc) = gloss(k,outc) + Rx(k)
+					end do
+
+				case default !Do general case
+					do j=1,nout
+						spcnum = GenChem%RxnOut(j,i)
+						do k=1,ktloop
+							gloss(k,spcnum) = gloss(k,spcnum) + Rx(k)
+						end do
+					end do
+			end select
+
+			if (GenChem%isFracRxn(i)) then
+				nf = nf+1
+				do j=1,GenChem%FracRxnNumOut(nf)
+					spcnum = GenChem%FracRxnOut(j,nf)
+					frac = GenChem%FracRate(j,nf)
+					do k=1,ktloop
+						gloss(k,spcnum) = gloss(k,spcnum) + frac*Rx(k)
+					end do
+				end do
+			end if
+
+		end do
+		end subroutine velocity
 
 
 !-----------------------------------------------------------------------------
@@ -481,28 +309,25 @@ contains
     ! rateConstants (reaction rates stay the same throughout the simulation)
     ! if chem_tdt changes or if the order changes, the Jacobian will change
 !-----------------------------------------------------------------------------
-
-      subroutine calculateTermOfJacobian (this, concentrationsNew, reactionRates, numRxnsOneActiveReactant)
+      subroutine calculateTermOfJacobian (this, concentrationsNew, reactionRates)
 
          implicit none
 
-         !     ----------------------
-         !     Argument declarations.
-         !     ----------------------
+!     ----------------------
+!     Argument declarations.
+!     ----------------------
          type (Mechanism_type) :: this
          real*8,  intent(in)  :: concentrationsNew  (KBLOOP, MXGSAER)
+			!K: This should not be called reactionRates, they're derivatives of rxn-rates
          real*8,  intent(out) :: reactionRates (KBLOOP, NMTRATE, 3)
-         integer, intent(in) :: numRxnsOneActiveReactant
 
-         !     ----------------------
-         !     Variable declarations.
-         !     ----------------------
-         integer :: nkn, block
-         integer :: ja, jb, jc
+!     ----------------------
+!     Variable declarations.
+!     ----------------------
+        integer :: nkn, block
+        integer :: ja, jb, jc
 
-         this%numRxns1 = this%numRxns2 + numRxnsOneActiveReactant
-
-         !    Partial derivatives for rates with three active loss terms.
+!    Partial derivatives for rates with three active loss terms.
          do nkn = 1, this%numRxns3
             ja = this%speciesNumberA(nkn)
             jb = this%speciesNumberB(nkn)

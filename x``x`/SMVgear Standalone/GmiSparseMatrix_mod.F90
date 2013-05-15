@@ -45,11 +45,14 @@ contains
 !
 ! NOTES: MRD: solver should not know number of reactions
 !-----------------------------------------------------------------------------
-      ! MRD: I + bT
-      subroutine calculatePredictor (nondiag, iarry, numGridCellsInBlock, &
-      & npdh, npdl, r1delt, jacobian, predictor)
+
+      subroutine calculatePredictor (nondiag, iarry, mechObject, cx, &
+      & npdh, npdl, r1delt, Predict)
 
       use Smv2Chem2_mod
+		use ChemTable_mod
+		use GmiMechanism_mod
+
       implicit none
 
 !     ----------------------
@@ -58,20 +61,22 @@ contains
          integer, intent(in) :: nondiag     ! # of final matrix positions, excluding diagonal
                              ! terms, filled after all matrix processes
          integer, intent(in) :: iarry
-         integer, intent(in)  :: numGridCellsInBlock
+			type (Mechanism_type), intent(in) :: mechObject
+			real*8, intent(in)  :: cx(KBLOOP,MXGSAER)
          integer, intent(in) :: npdh, npdl
 
          real*8,  intent(in)  :: r1delt
-         real*8,  intent(in) :: jacobian(KBLOOP, NMTRATE, 3)
-         real*8,  intent(inout) :: predictor  (KBLOOP, 0:MXARRAY)
+         real*8,  intent(inout) :: Predict (KBLOOP, 0:MXARRAY)
 
 
 !     ----------------------
 !     Variable declarations.
 !     ----------------------
-         integer :: iar, k, n, nkn, ial
+         integer :: iar, k, n, nkn, ial,ktloop, nin, ina, inb
          real*8  :: fracr1
+		
 
+			ktloop = mechObject%numGridCellsInBlock
 
          ! list of non-zero values
          ! MRD: derived type that combines the predictor below,
@@ -79,14 +84,14 @@ contains
          ! could be called sparseMatrix (stay on the solver type)
          ! is predictor and Jacobian the same size?
          do iar = 1, nondiag
-            do k = 1, numGridCellsInBlock
-               predictor(k,iar) = 0.0d0
+            do k = 1, ktloop 
+               Predict(k,iar) = 0.0d0
             end do
          end do
 
          do iar = nondiag + 1, iarry
-            do k = 1, numGridCellsInBlock
-               predictor(k,iar) = 1.0d0
+            do k = 1, ktloop 
+               Predict(k,iar) = 1.0d0
             end do
          end do
 
@@ -97,10 +102,38 @@ contains
             ial    = iialpd  (n) ! iialpd in common block
             fracr1 = fracpl  (n) * r1delt ! fracpl in a common block
 
-            do k = 1, numGridCellsInBlock
-               ! MRD: iar and ial need to get attached to sparseMatrix type
-               predictor(k,iar) = predictor(k,iar) + (fracr1 * jacobian(k,nkn,ial))
-            end do
+				nin = GenChem%RxnNumIn(nkn)
+				select case (nin)
+					case(2) 
+						if (ial .eq. 1) then
+							ina = GenChem%RxnIn(2,nkn)
+						else 
+							ina = GenChem%RxnIn(1,nkn)
+						end if
+						do k=1, ktloop
+							Predict(k,iar) = Predict(k,iar) + fracr1* &
+							& mechObject%rateConstants(k,nkn)*cx(k,ina)
+						end do
+					case(1) !Only one var to take deriv wrt
+						do k=1, ktloop
+							Predict(k,iar) = Predict(k,iar)+ (fracr1*mechObject%rateConstants(k,nkn))
+						end do
+					case(3)
+						if (ial .eq. 1) then
+							ina = GenChem%RxnIn(2,nkn)
+							inb = GenChem%RxnIn(3,nkn)
+						else if (ial .eq. 2) then
+							ina = GenChem%RxnIn(1,nkn)
+							inb = GenChem%RxnIn(3,nkn)
+						else 
+							ina = GenChem%RxnIn(1,nkn)
+							inb = GenChem%RxnIn(2,nkn)
+						endif
+						do k=1, ktloop
+							Predict(k,iar) = Predict(k,iar) + fracr1* &
+							& mechObject%rateConstants(k,nkn)*cx(k,ina)*cx(k,inb)
+						end do
+				end select
 
          end do
 

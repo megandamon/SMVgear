@@ -139,8 +139,7 @@
 !              on output from Backsub
 !   vdiag    : 1 / current diagonal term of the decomposed matrix
 !   rrate    : rate constants
-!   trate    : rxn rate (moles l^-1-h2o s^-1 or # cm^-3 s^-1 (?))
-!   urate    : term of Jacobian (J) = partial derivative
+!   trate    : rxn rate (moles l^-1-h2o s^-1 or # cm^-3 s^-1 (?)) !REMOVED!
 !
 !-----------------------------------------------------------------------------
 
@@ -151,17 +150,16 @@
      &   fracdec, hmaxnit, pr_nc_period, tdt, do_cell_chem, irma, irmb,  &
      &   irmc, jreorder, jphotrat, ntspec, inewold, denair, corig,  &
      &   pratk1, yemis, smvdm, nfdh1, errmx2, cc2, cnew, gloss, vdiag,  &
-     &   rrate, trate, urate, &
+     &   rrate, &
      &   yda, qqkda, qqjda, qkgmi, qjgmi, &
      &   CTMi1, CTMi2, CTMju1, CTMj2, CTMk1, CTMk2, &
-     &   num_qjo, num_qks, num_qjs, num_active)
+     &   num_qjo, num_qks, num_qjs, num_active, prDiag)
 
       use GmiPrintError_mod, only : GmiPrintError
       use GmiMechanism_mod
       use GmiManager_mod
       use GmiSparseMatrix_mod
       use Smv2Chem2_mod
-
 
       implicit none
 
@@ -200,6 +198,7 @@
       real*8,  intent(in)  :: pr_nc_period
       real*8,  intent(in)  :: tdt
       logical, intent(in)  :: do_cell_chem(ilong, ilat, ivert)
+		!K: irm[a,b,c] can be removed as they are now in GenChem and don't vary with block
       integer, intent(in)  :: irma    (NMTRATE)
       integer, intent(in)  :: irmb    (NMTRATE)
       integer, intent(in)  :: irmc    (NMTRATE)
@@ -213,16 +212,17 @@
       real*8,  intent(in)  :: yemis   (ilat*ilong, IGAS)
 
       real*8,  intent(inout) :: errmx2(itloop)
+		!K: Why is cc2 passed in/out?  Seems silly
+		!K: Same question for everything but cnew
       real*8,  intent(inout) :: cc2   (KBLOOP, 0:MXARRAY)
       real*8,  intent(inout) :: cnew  (KBLOOP, MXGSAER)
       real*8,  intent(inout) :: gloss (KBLOOP, MXGSAER)
       real*8,  intent(inout) :: smvdm (KBLOOP, MXGSAER)
       real*8,  intent(inout) :: vdiag (KBLOOP, MXGSAER)
       real*8,  intent(inout) :: rrate (KBLOOP, NMTRATE)
-      real*8,  intent(inout) :: trate (KBLOOP, NMTRATE*2)
-      real*8,  intent(inout) :: urate (KBLOOP, NMTRATE, 3)
 
       integer, intent(out) :: nfdh1
+      logical, intent(in)  :: prDiag
 
 
 !     ----------------------
@@ -307,9 +307,9 @@
       type (Manager_type) :: managerObject
       integer :: nondiag     ! # of final matrix positions, excluding diagonal
 
-
       call initializeMechanism (mechanismObject, ktloop, irma, &
                               &  irmb, irmc, nfdh2, nfdh3, nfdrep)
+
 
       nact = nnact
 
@@ -319,11 +319,14 @@
 
       call resetGear (managerObject, ncsp, ncs, ifsun, hmaxnit)
 
+! 100 calls 150
 !     ========
  100  continue
 !     ========
-
-      print*, "in 100"
+!     ----------------------------------------------------
+!     Start time interval or re-enter after total failure.
+!     ----------------------------------------------------
+      if (prDiag) Write(*,*) "100"
 
       call startTimeInterval (managerObject, ncs)
 
@@ -336,16 +339,16 @@
         end do
       end do
 
+! routine start restartTimeInterval
 !     --------------------------------------------------------------------
 !     Re-enter here if total failure or if restarting with new cell block.
 !     --------------------------------------------------------------------
-
 ! 150 resets some stuff, then calls update
 !     ========
  150  continue
 !     ========
 
-      print*, "in 150"
+      if (prDiag) Write(*,*) "in 150"
 
       call resetBeforeUpdate (managerObject)
 
@@ -353,28 +356,23 @@
 !     Initialize photrates.
 !     ---------------------
 
-!DIR$ INLINE
-!
+!!DIR$ INLINE
 
-      ! MRD: Update will be moved outside the solver
-      ! It will exist in the GMI driver
-      ! Some GMI chem wrapper will initalize this, and then called the solver
-      ! Move this routine into the mechanism, but it not generic
-      ! update_dxdt may call this particular Update routine
-      call Update  (ktloop, nallr, ncs, ncsp, jphotrat, pratk1, rrate, trate)
+		! K: Removed trate from Update call (no longer needed)
+      call Update  (ktloop, nallr, ncs, ncsp, jphotrat, pratk1, rrate)
 
-!DIR$ NOINLINE
+!!DIR$ NOINLINE
 
       ! update can be inside the mechanism, and rrate can possibly
       ! turn to protected, or private
       mechanismObject%rateConstants = rrate
       mechanismObject%numActiveReactants = nallr
 
-      call velocity (mechanismObject, managerObject%num1stOEqnsSolve, ncsp, cnew, gloss, trate, nfdh1)
+      call velocity(mechanismObject, managerObject%num1stOEqnsSolve, ncsp, cnew, gloss, nfdh1)
       managerObject%numCallsVelocity = managerObject%numCallsVelocity + 1
-
       ! MRD: can this be removed?
-      mechanismObject%rateConstants = rrate
+		! K: Yes
+      ! mechanismObject%rateConstants = rrate
 
       call setBoundaryConditions (mechanismObject, itloop, jreorder, jlooplo, ilat, &
             & ilong, ntspec, ncs, inewold, do_semiss_inchem, gloss, yemis)
@@ -460,6 +458,7 @@
       else
 !     ====
 
+
       call calculateErrorTolerances (managerObject, ktloop, jlooplo, itloop, cnew, gloss, dely, errmx2)
       return
 
@@ -497,13 +496,15 @@
  200  continue
 !     ========
 
-      print*, "in continue 200"
+      if (prDiag) Write(*,*) "in continue 200"
+
 
       if (managerObject%nqq /= managerObject%nqqold) call updateCoefficients (managerObject)
       call calculateTimeStep (managerObject, delt, jeval, MAX_REL_CHANGE)
 
 
-      print*, "tightening absolute error tolerance"
+
+      if (prDiag) Write(*,*) "tightening absolute error tolerance"
       if (delt < HMIN) then
         call tightenErrorTolerance (managerObject, pr_smv2, lunsmv, ncs, delt)
         !     ========================================
@@ -517,7 +518,7 @@
 !     If the delt is different than during the last step (if rdelt /= 1),
 !     then scale the derivatives.
 !     -------------------------------------------------------------------
-      print*, "scaling derivatives"
+      if (prDiag) Write(*,*) "scaling derivatives"
       if (managerObject%rdelt /= 1.0d0) then
 
         rdelta = 1.0d0
@@ -548,7 +549,7 @@
 !     If the last step was successful, reset rdelmax = 10 and update
 !     the chold array with current values of cnew.
 !     --------------------------------------------------------------
-   print*, "last time step was successful"
+   if (prDiag) Write(*,*) "last time step was successful"
 !     ================================
       IFSUCCESSIF: if (managerObject%ifsuccess == 1) then
 !     ================================
@@ -631,13 +632,13 @@
 
 ! routine end resetDelMaxUpdateWithCnew
 
-
    ! routine start computePredictConcPascal
 !     ------------------------------------------------------------------
 !     Compute the predicted concentration and derivatives by multiplying
 !     previous values by the pascal triangle matrix.
 !     ------------------------------------------------------------------
-   print*, "computing predicted conc and derivatives using pascal triangle matrix"
+
+      if (prDiag) Write(*,*) "computing predicted conc and derivatives using pascal triangle matrix"
       i1 = managerObject%nqqisc + 1
 
       do jb = 1, managerObject%nqq - 1
@@ -700,7 +701,6 @@
 !     ========
  250  continue ! correctionLoop
 !     ========
-   print*, "in 250 or correction loops"
 
       l3 = 0
 
@@ -712,6 +712,8 @@
       end do
    ! routine stop correctionLoop
 
+   ! routine start reEvalPredictor
+!     ---------------------------------------
 
    ! routine start reEvalPredictor
 !     ---------------------------------------
@@ -724,25 +726,26 @@
 !     ------------------------------------------------------------------
 
       if (jeval == 1) then
-         print*, "re-evalulate predictor matrix"
 
+         if (prDiag) Write(*,*) "re-evalulate predictor matrix"
          r1delt = -managerObject%asn1 * delt
          nondiag  = sparseMatrixDimension(ncsp) - managerObject%num1stOEqnsSolve
 
-         call calculateTermOfJacobian (mechanismObject, cnew, urate, numRxnsOneActiveReactant(ncsp))
+         !K: Need to send whole mech object to get rrate in predictor, also need cnew
+         call calculatePredictor(nondiag,sparseMatrixDimension(ncsp),mechanismObject, cnew, &
+              & npdhi(ncsp), npdlo(ncsp), r1delt, cc2)
+         managerObject%numCallsPredict = managerObject%numCallsPredict+1
 
-         managerObject%numCallsPredict  = managerObject%numCallsPredict + 1
-         call calculatePredictor (nondiag, sparseMatrixDimension(ncsp), mechanismObject%numGridCellsInBlock, &
-            &  npdhi(ncsp), npdlo(ncsp), r1delt, urate, cc2)
+         ! MRD: unclear to me why this is here; maybe cause problems
+         !mechanismObject%numRxns1 = nfdh2 + ioner(ncsp)
 
-         ! MRD: End block of code that was in Pderiv
-
-!DIR$   INLINE
+			!K: Consider un-inlining this.
+!!DIR$   INLINE
 !       ===========
         call Decomp  &
 !       ===========
      &    (managerObject%num1stOEqnsSolve, ktloop, ncsp, cc2, vdiag)
-!DIR$   NOINLINE
+!!DIR$   NOINLINE4
 
         jeval  = -1
         managerObject%hratio = 1.0d0
@@ -767,8 +770,9 @@
  300  continue
 !     ========
 
-      print*, "in 300, evaluating first derivative"
-      call velocity (mechanismObject, managerObject%num1stOEqnsSolve, ncsp, cnew, gloss, trate, nfdh1)
+      if (prDiag) Write(*,*) "in 300, evaluating first derivative"
+      call velocity (mechanismObject, managerObject%num1stOEqnsSolve, ncsp, cnew, gloss, nfdh1)
+
       managerObject%numCallsVelocity = managerObject%numCallsVelocity + 1
 
       call setBoundaryConditions (mechanismObject, itloop, jreorder, jlooplo, ilat, &
@@ -801,14 +805,11 @@
 !     --------------------------------------------------------------
 ! MRD: goes in gear b/c manager doesn't know about backsubstitution
 ! As part of gear's timestep it calls backsub
-   print*, "solve system of equations"
+   if (prDiag) Write(*,*) "solve system of equations"
 !     ============
       call Backsub  & ! MRD: rename to solve? per Tom.
 !     ============
      &  (managerObject%num1stOEqnsSolve, ktloop, ncsp, cc2, vdiag, gloss)
-
-
-
    ! routine start sumAccumError
 !     ---------------------------------------
 !     ----------------------------------------------------------------
@@ -816,7 +817,8 @@
 !     error, and begin to calculate the rmsnorm of the error relative
 !     to chold.
 !     ----------------------------------------------------------------
-      print*, "accumulating error"
+      if (prDiag) Write(*,*) "accumulating error"
+
       do kloop = 1, ktloop
         dely(kloop) = 0.0d0
       end do
@@ -848,14 +850,14 @@
 !     --------------------------------------------------------
 
       if (managerObject%dcon > 1.0d0) then
-      print*, "convergence"
+      if (prDiag) Write(*,*) "convergence"
 !       -------------------------------------------------------------------
 !       If nonconvergence after one step, re-evaluate first derivative with
 !       new values of cnew.
 !       -------------------------------------------------------------------
 
         if (l3 == 1) then
-        print*, "re evaulate first deriviatives"
+        if (prDiag) Write(*,*) "re evaulate first deriviatives"
 
 !         =========
           go to 300 !evalFirstDerivative
@@ -872,7 +874,8 @@
 !         ----------------------------------------------------------------
 
         else if (jeval == 0) then
-         print*, "conversion failure"
+         if (prDiag) Write(*,*) "conversion failure"
+
           managerObject%numFailOldJacobian = managerObject%numFailOldJacobian + 1
           jeval = 1
 
@@ -953,7 +956,7 @@
 !     ==============================
       DER2MAXIF: if (managerObject%der2max > managerObject%enqq) then
 !     ==============================
-         print*, "der2max > enqq"
+         if (prDiag) Write(*,*) "der2max > enqq"
         managerObject%xelaps = managerObject%told
         managerObject%numFailErrorTest  = managerObject%numFailErrorTest + 1
         managerObject%jFail  = managerObject%jFail  + 1
@@ -984,13 +987,14 @@
 
           managerObject%ifsuccess = 0
           managerObject%rdeltup   = 0.0d0
-      print*, "managerObject%jFail <= 6"
+          if (prDiag) Write(*,*) "managerObject%jFail <= 6"
+
 !         =========
           go to 400
 !         =========
 
         else if (managerObject%jFail <= 20) then
-      print*, "managerObject%jFail <= 20"
+         if (prDiag) Write(*,*) "managerObject%jFail <= 20"
           managerObject%ifsuccess = 0
           managerObject%rdelt     = fracdec
 
@@ -1053,8 +1057,8 @@
 !
 !       After a successful step, update the concentration and all
 !       derivatives, reset told, set ifsuccess = 1, increment numSuccessTdt,
-!       -------------------------------------------------------------
-   print*, "successful stepping"
+      if (prDiag) Write(*,*) "successful stepping"
+
 
         if (pr_qqjk .and. do_qqjk_inchem) then
           xtimestep = managerObject%xelaps - managerObject%told
@@ -1073,6 +1077,7 @@
 
         managerObject%jFail     = 0
         managerObject%ifsuccess = 1
+
         managerObject%numSuccessTdt    = managerObject%numSuccessTdt + 1
         managerObject%told      = managerObject%xelaps
 
@@ -1108,8 +1113,8 @@
 !       ------------------------------
 ! belongs in gear
 ! double check, but it looks like we can eliminate the first part
-print*, "update chemistry mass balance"
-
+if (prDiag) Write(*,*) "update chemistry mass balance"
+!K: Why are we relying on testing equality between real numbers?  That's silly.
         if (managerObject%asn1 == 1.0d0) then
 
           do i = 1, managerObject%num1stOEqnsSolve
@@ -1146,7 +1151,8 @@ print*, "update chemistry mass balance"
 !       ---------------------------------------------------
 
         managerObject%timeremain = managerObject%chemTimeInterval - managerObject%xelaps
-   print*, "checking time interval"
+        if (prDiag) Write(*,*) "checking time interval"
+
         if (managerObject%timeremain <= 1.0d-06) return
 
 !       -------------------------------------------------------------------
@@ -1183,7 +1189,8 @@ print*, "update chemistry mass balance"
           end if
 
           managerObject%rdelt = 1.0d0
-         print*, "Going to 200"
+         if (prDiag) Write(*,*) "Going to 200"
+
 !         =========
           go to 200
 !         =========
@@ -1218,7 +1225,8 @@ print*, "update chemistry mass balance"
 !     ---------------------------------------------------------------
         ! routine start changeStepSizeAndOrderTest
 !     -------------------------------------------------------------------
-   print*, "testing whether or not to change time order"
+   if (prDiag) Write(*,*) "testing whether or not to change time order"
+
       if (managerObject%nqq < MAXORD) then
 
         do kloop = 1, ktloop
@@ -1244,6 +1252,7 @@ print*, "update chemistry mass balance"
         end do
 
         managerObject%rdeltup = 1.0d0 / ((managerObject%conp3 * der3max**enqq3(managerObject%nqq)) + 1.4d-6)
+
 
       else
 
@@ -1281,6 +1290,7 @@ print*, "update chemistry mass balance"
 
       else if (managerObject%rdelt == managerObject%rdeltdn) then
 
+
         managerObject%nqq = managerObject%nqq - 1
 
 !       ---------------------------------------------------------------
@@ -1288,6 +1298,7 @@ print*, "update chemistry mass balance"
 !       the current order, increase the order and add a derivative term
 !       for the higher order.
 !       ---------------------------------------------------------------
+
 
       else if (managerObject%rdelt == managerObject%rdeltup) then
 
@@ -1465,6 +1476,7 @@ print*, "update chemistry mass balance"
           j3  = kzerod(kc)
           j4  = kzeroe(kc)
 
+			 !K: Hot loop
           do k = 1, ktloop
             gloss(k,i) =  &
      &        gloss(k,i) -  &
@@ -1819,7 +1831,6 @@ print*, "update chemistry mass balance"
 !
 !     Sum 1,2,3,4, OR 5 terms at a time to improve vectorization.
 !     -----------------------------------------------------------
-
 !     =======================
       JLOOP: do j = 1, num1stOEqnsSolve !num species with reaction, we think
 !     =======================
@@ -1844,6 +1855,9 @@ print*, "update chemistry mass balance"
 
 !         -- Sum 5 terms at a time. --
           ! MRD: does this unrolling really help...?
+			 !K: Unclear, I'd rather remove it for clarity if nothing else
+			 !K: But this involves unifying ikdeca,etc
+
           ! should be part of sparse matrix type
           do ic = il5, ih5
 
@@ -1858,7 +1872,7 @@ print*, "update chemistry mass balance"
             kj2 = kjdecc(ic)
             kj3 = kjdecd(ic)
             kj4 = kjdece(ic)
-
+!K: Hot loop
             do k = 1, ktloop
               cc2(k,ij) =  & !ij is nth location of this matrix
      &          cc2(k,ij) -  &
@@ -2009,7 +2023,6 @@ print*, "update chemistry mass balance"
 !   jphotrat : tbd
 !   ptratk1  : tbd
 !   rrate    : rate constants
-!   trate    : rxn rate (moles l^-1-h2o s^-1 or # cm^-3 s^-1 (?))
 !
 !-----------------------------------------------------------------------------
 ! MRD: Update is probably setPhotolysisCoeffs and computeRateCoeffs
@@ -2017,7 +2030,8 @@ print*, "update chemistry mass balance"
 ! MRD: Solver will not call it
 
       subroutine Update  &
-     &  (ktloop, nallr, ncs, ncsp, jphotrat, pratk1, rrate, trate)
+     &  (ktloop, nallr, ncs, ncsp, jphotrat, pratk1, rrate)
+
       use Smv2Chem2_mod
       implicit none
 
@@ -2036,7 +2050,6 @@ print*, "update chemistry mass balance"
       real*8,  intent(in)  :: pratk1  (KBLOOP, IPHOT)
 
       real*8,  intent(inout) :: rrate(KBLOOP, NMTRATE)
-      real*8,  intent(inout) :: trate(KBLOOP, NMTRATE*2)
 
 
 !     ----------------------
@@ -2068,25 +2081,6 @@ print*, "update chemistry mass balance"
         end do
 
       end do
-
-
-!     ------------------------------------------------------
-!     Set rates where photoreaction has no active loss term.
-!     ------------------------------------------------------
-
-      do i = 1, nolosp(ncsp)
-
-        nk  = nknlosp(i,ncs)
-        nkn = newRxnRateNumber(nk,ncs)
-        nh  = nkn + nallr
-
-        do kloop = 1, ktloop
-          trate(kloop,nkn) =  rrate(kloop,nkn)
-          trate(kloop,nh)  = -trate(kloop,nkn)
-        end do
-
-      end do
-
 
       return
 

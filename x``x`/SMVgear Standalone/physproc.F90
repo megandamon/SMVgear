@@ -93,7 +93,7 @@
      &   csumc, errmx2, cx, &
      &   yda, qqkda, qqjda, qkgmi, qjgmi, &
      &   i1, i2, ju1, j2, k1, k2, &
-     &   num_qjo, num_qks, num_qjs, num_active)
+     &   num_qjo, num_qks, num_qjs, num_active, prDiag)
 
       use timing_mod, only: timingOn, timingOff
       implicit none
@@ -146,6 +146,7 @@
       real*8,  intent(inout) :: csumc   (numZones)
       real*8,  intent(inout) :: errmx2  (numZones)
       real*8,  intent(inout) :: cx      (numZones, IGAS)
+      logical, intent(in)  :: prDiag
 
 
 !     ----------------------
@@ -182,7 +183,7 @@
       else
         ifSun = 2
       end if
-      print*, "First cell check, ifSun = ", ifSun
+      if (prDiag) Write(*,*) "First cell check, ifSun = ", ifSun
 
       ! The can replace code block above
       isDaytimeInFirstCell = (prate(1,1) >= PHOTOLYSIS_THRESHOLD)
@@ -199,7 +200,7 @@
         ifSun1: do jloop = 2, ntLoopNcs(gasChemistryType)
           if (prate(jloop,1) .lt. PHOTOLYSIS_THRESHOLD) then
             idaynt = 2
-            print*, "ifSun = 1 and idaynt flipped"
+            if (prDiag) Write(*,*) "ifSun = 1 and idaynt flipped"
             exit ifSun1
           end if
         end do ifSun1
@@ -214,7 +215,7 @@
         ifSun2: do jloop = 2, ntLoopNcs(gasChemistryType)
           if (prate(jloop,1) .gt. PHOTOLYSIS_THRESHOLD) then
             idaynt = 2
-            print*, "ifSun = 2 and idaynt flipped"
+            if (prDiag) Write(*,*) "ifSun = 2 and idaynt flipped"
             exit ifSun2
           end if
         end do ifSun2
@@ -245,14 +246,14 @@
         do ireord = loreord, 2
 
           if (ireord == loreord) then
-            call timingOn("Deter_Block_Size")
+            !call timingOn("Deter_Block_Size")
 !           =====================
             call Deter_Block_Size  &
 !           =====================
      &        (iday, idaynt, numZones, numGridCellsInBlock, gasChemistryType, doCellChem,  &
      &         ntLoopNcs, prate, ifSun, nblockuse, ntloopuse, jlowvar,  &
      &         ktlpvar, jreorder)
-            call timingOff("Deter_Block_Size")
+            !call timingOff("Deter_Block_Size")
           else
             nblockuse = nreblock
           end if
@@ -262,7 +263,7 @@
             lreorder(jloopn) = jreorder(jloopn)
           end do
 
-            call timingOn("Solve_Block")
+            !call timingOn("Solve_Block")
 !         ================
           call Solve_Block  &
 !         ================
@@ -273,18 +274,18 @@
      &       jlowvar, ktlpvar, origSpcNumber, npphotrat, arate, prate, yemis,  &
      &       jreorder, lreorder, errmx2, cx, &
      &       yda, qqkda, qqjda, qkgmi, qjgmi, &
-     &       i1, i2, ju1, j2, k1, k2, num_qjo, num_qks, num_qjs, num_active)
-            call timingOff("Solve_Block")
+     &       i1, i2, ju1, j2, k1, k2, num_qjo, num_qks, num_qjs, num_active, prDiag)
+            !call timingOff("Solve_Block")
 
 
           if (ireord == 1) then
-            call timingOn("Reorder_Grid_Cells")
+            !call timingOn("Reorder_Grid_Cells")
 !           =======================
             call Reorder_Grid_Cells  &
 !           =======================
      &        (numZones, numGridCellsInBlock, ntloopuse, errmx2, jreorder, csuma,  &
      &         nreblock, lreorder, jlowvar, ktlpvar, csumc)
-            call timingOff("Reorder_Grid_Cells")
+            !call timingOff("Reorder_Grid_Cells")
           end if
 
         end do
@@ -513,8 +514,8 @@
      &   jlowvar, ktlpvar, origSpcNumber, npphotrat, arate, prate, yemis,  &
      &   jreorder, lreorder, errmx2, cx, &
      &   yda, qqkda, qqjda, qkgmi, qjgmi, &
-     &   i1, i2, ju1, j2, k1, k2, num_qjo, num_qks, num_qjs, num_active)
-
+     &   i1, i2, ju1, j2, k1, k2, num_qjo, num_qks, num_qjs, num_active, prDiag)
+      use Smv2Chem2_mod
       use timing_mod, only: timingOn, timingOff
       implicit none
 
@@ -524,7 +525,8 @@
 !#endif
 !     ==========================
 #     include "smv2chem_par.h"
-
+!K: Added include to access certain common variables
+!#include "smv2chem2.h"
 
 !     ----------------------
 !     Argument declarations.
@@ -571,6 +573,7 @@
       integer, intent(inout) :: lreorder(numZones)
       real*8,  intent(inout) :: errmx2  (numZones)
       real*8,  intent(inout) :: cx      (numZones, IGAS)
+      logical, intent(in)  :: prDiag
 
 
 !     -----------------------
@@ -631,7 +634,6 @@
 !     rrate  : rate constants
 !              (s^-1, cm^3/molec*s, cm^6/molec*s^2, or cm^9/molec*s^3)
 !     trate  : rxn rate (moles l^-1-h2o s^-1 or # cm^-3 s^-1 (?))
-!     urate  : term of Jacobian (J) = partial derivative
 !     -----------------------------------------------------------------------
 
       real*8  :: cc2   (KBLOOP, 0:MXARRAY)  = 0.0d0
@@ -646,75 +648,32 @@
       real*8  :: vdiag (KBLOOP, MXGSAER)    = 0.0d0
 
       real*8  :: rrate (KBLOOP, NMTRATE)    = 0.0d0
-      real*8  :: trate (KBLOOP, NMTRATE*2)  = 0.0d0
-      real*8  :: urate (KBLOOP, NMTRATE, 3) = 0.0d0
-
+		real*8  :: dummy (KBLOOP, NMTRATE)    = 0.0d0
       character(len=128) :: smvgear_cell_id
-
-!     ===============================
-!$    integer :: Omp_Get_Max_Threads
-!$    integer :: Omp_Get_Num_Threads
-!c    integer :: Omp_Get_Thread_Num
-
-!$    integer :: max_thrds, num_thrds
-!c    integer :: thrd_num
-!     ===============================
-
-!     =========================
-!c    real*8  :: wclk1, wclk2
-!c    real*8  :: wtime
-!c    real*8  :: ctime(MXBLOCK)
-!c    real*8  :: sumtime(0:15)
-!     =========================
 
 !     ----------------
 !     Begin execution.
 !     ----------------
 
-      if (DOWRT_SBDIAG) then
-!       ====================================================================
-!#if (MSG_OPTION == MSG_MPI)
-!        call Mpi_Comm_Rank (commu_slaves, proc_num, ierr)
-!        proc_num = proc_num + 1  ! change proc_num range from 0->N to 1->N+1
-!#endif
 
-!$omp   parallel
-!$      num_thrds = Omp_Get_Num_Threads ( )
-!$omp   end parallel
-
-!$      max_thrds = Omp_Get_Max_Threads ( )
-!$      Write (6,900) proc_num, max_thrds, num_thrds, nblockuse
-!$900   format ('Proc #, Max Thrds, # Thrds, nblockuse:  ',
-!$   &          i6, i4, i4, i8)
-!       ====================================================================
-      end if
-
-!c    call f_hpmstart (1, "chem block loop")
-
-!c    call Mpi_Comm_Rank (commu_slaves, proc_num, ierr)
-!c    ctime  (:) = 0.0d0
-!c    sumtime(:) = 0.0d0
-
-!$omp   parallel do
-!$omp&  default(shared)
-!$omp&  schedule(runtime)
-!$omp&  private(j, jgas, jnew, kblk, np)
-!$omp&  private(jloop, jlooplo, kloop, ktloop)
-!$omp&  private(nallr, nfdrep, nfdrep1)
-!$omp&  private(nfdh1, nfdh2, nfdh3, nfdl1, nfdl2)
-!$omp&  private(cblk, cc2, cnew, corig)
-!$omp&  private(denair, gloss)
-!$omp&  private(irma, irmb, irmc)
-!$omp&  private(pratk1, smvdm, vdiag)
-!$omp&  private(rrate, trate, urate)
+!$omp   parallel do &
+!$omp&  default(shared) &
+!$omp&  schedule(runtime) &
+!$omp&  private(j, jgas, jnew, kblk, np) &
+!$omp&  private(jloop,jlooplo,kloop) &
+!$omp&  firstprivate(ktloop) &
+!$omp&  firstprivate(nallr, nfdrep, nfdrep1) &
+!$omp&  firstprivate(nfdh1, nfdh2, nfdh3, nfdl1, nfdl2) &
+!$omp&  firstprivate(cblk, cc2, cnew, corig) &
+!$omp&  firstprivate(denair, gloss) &
+!$omp&  firstprivate(irma, irmb, irmc) &
+!$omp&  firstprivate(pratk1, smvdm, vdiag) &
+!$omp&  firstprivate(dummy,rrate)
 
 !     ======================
       do kblk = 1, nblockuse
 !     ======================
 
-!c      thrd_num  = Omp_Get_Thread_Num  ( )
-!c      num_thrds = Omp_Get_Num_Threads ( )
-!c      wclk1     = Mpi_Wtime (ierr)
 
         jlooplo = jlowvar(kblk)
         ktloop  = ktlpvar(kblk)
@@ -742,12 +701,13 @@
 !         The urate=arate loop is where the 2D diurnal averaging
 !         factors for the thermal reactions are passed in.  urate
 !         later is used for another purpose.
+!         K: urate replaced by "dummy"
 !         -------------------------------------------------------
 
           do j = 1, numKineticRxns(gasChemistryType)
             do kloop = 1, ktloop
               jloop            = lreorder(jlooplo+kloop)
-              urate(kloop,j,1) = arate(jloop,j)
+				  dummy(kloop,j)   = arate(jloop,j)
             end do
           end do
 
@@ -758,16 +718,16 @@
 !         ireord = 2 : set chemistry rates and solve equations
 !         --------------------------------------------------------------
 
-          call timingOn("Calcrate")
+          !call timingOn("Calcrate")
 !         =============
           call Calcrate  &
 !         =============
      &      (ifSun, airDensityIndex, nitrogenSpNum, oxygenSpNum, numZones, jlooplo,  &
-     &       ktloop, gasChemistryType, jreorder, numKineticRxns, numActInActGases, cx, urate,  &
-     &       denair, pratk1, cblk, rrate, trate, nallr, nfdh1, nfdh2,  &
+     &       ktloop, gasChemistryType, jreorder, numKineticRxns, numActInActGases, cx, dummy,  &
+     &       denair, pratk1, cblk, rrate, nallr, nfdh1, nfdh2,  &
      &       nfdh3, nfdl1, nfdl2, nfdrep, nfdrep1, irma, irmb, irmc,  &
      &       corig, smvdm)
-          call timingOff("Calcrate")
+          !call timingOff("Calcrate")
 
 !         --------------------
 !         Solve chemical odes.
@@ -786,10 +746,10 @@
      &       nfdrep, nfdrep1, fractionDecrease, maxTimeStepNight, ncOutPeriod, modelTimeStep,  &
      &       doCellChem, irma, irmb, irmc, jreorder, jPhotRate,  &
      &       numActInActGases, origSpcNumber, denair, corig, pratk1, yemis, smvdm,  &
-     &       nfdh1, errmx2, cc2, cnew, gloss, vdiag, rrate, trate,  &
-     &       urate, yda, qqkda, qqjda, qkgmi, qjgmi, &
-     &       i1, i2, ju1, j2, k1, k2, num_qjo, num_qks, num_qjs, num_active)
-          call timingOff(trim(smvgear_cell_id))
+     &       nfdh1, errmx2, cc2, cnew, gloss, vdiag, rrate,  &
+     &       yda, qqkda, qqjda, qkgmi, qjgmi, &
+     &       i1, i2, ju1, j2, k1, k2, num_qjo, num_qks, num_qjs, num_active, prDiag)
+          !call timingOff(trim(smvgear_cell_id))
 
 !         -----------------------------------------------------
 !         Replace block concentrations (molec/cm^3) into domain
@@ -817,22 +777,9 @@
 !       ======
         end if
 !       ======
-
-!c      wclk2       = Mpi_Wtime (ierr)
-!c      ctime(kblk) = wclk2 - wclk1
-!c      Write (6,910) proc_num, thrd_num, kblk, ctime(kblk)
-!910    format ('Proc #, Thrd, Block, Time:  ', i6, i4, i8, e20.8)
-!c      sumtime(thrd_num) = sumtime(thrd_num) + ctime(kblk)
-
 !     ======
       end do
 !     ======
-
-!c    call f_hpmstop (1)
-
-!c    Write (6,920)
-!c   &  proc_num, (sumtime(thrd_num), thrd_num=0,num_thrds-1)
-!920  format ('Proc #, sumtime:  ', i6, 16e20.8)
 
       return
 
@@ -862,7 +809,6 @@
 !   numKineticRxns    : # of kinetic rxns (non-photo)
 !   numActInActGases    : # of active + inactive gases
 !   cx        : spc conc (molec/cm^3)
-!   urate     : term of Jacobian (J) = partial derivative
 !   denair    : density of air  (molec/cm^3)
 !   pratk1    : tbd
 !   cblk      : gas-phase cogasChemistryType (molec/cm^3)
@@ -888,8 +834,8 @@
 
       subroutine Calcrate  &
      &  (ifSun, airDensityIndex, nitrogenSpNum, oxygenSpNum, numZones, jlooplo, ktloop,  &
-     &   gasChemistryType, jreorder, numKineticRxns, numActInActGases, cx, urate, denair, pratk1,  &
-     &   cblk, rrate, trate, nallr, nfdh1, nfdh2, nfdh3, nfdl1, nfdl2,  &
+     &   gasChemistryType, jreorder, numKineticRxns, numActInActGases, cx, dummy, denair, pratk1,  &
+     &   cblk, rrate, nallr, nfdh1, nfdh2, nfdh3, nfdl1, nfdl2,  &
      &   nfdrep, nfdrep1, irma, irmb, irmc, corig, smvdm)
 
       use Smv2Chem2_mod
@@ -914,13 +860,13 @@
       integer, intent(in)  :: numKineticRxns  (ICS)
       integer, intent(in)  :: numActInActGases  (ICS)
       real*8,  intent(in)  :: cx      (numZones, IGAS)
-      real*8,  intent(in)  :: urate   (KBLOOP, NMTRATE, 3)
+		!K: Fix the sloppy use of dummy
+      real*8,  intent(inout)  :: dummy (KBLOOP, NMTRATE)
 
       real*8,  intent(inout) :: denair(ktloop)
       real*8,  intent(inout) :: pratk1(KBLOOP, IPHOT)
       real*8,  intent(inout) :: cblk  (KBLOOP, MXGSAER)
       real*8,  intent(inout) :: rrate (KBLOOP, NMTRATE)
-      real*8,  intent(inout) :: trate (KBLOOP, NMTRATE*2)
 
       integer, intent(out) :: nallr
       integer, intent(out) :: nfdh1,  nfdh2, nfdh3
@@ -961,7 +907,7 @@
 
       do nk = 1, numKineticRxns(gasChemistryType)
         do kloop = 1, ktloop
-          rrate(kloop,nk) = urate(kloop,nk,1)
+			 rrate(kloop,nk) = dummy(kloop,nk)
         end do
       end do
 
@@ -1072,35 +1018,20 @@
       end do
 
 
-!     ---------------------------------
-!     trate here used as a dummy array.
-!     ---------------------------------
 
       do nk = 1, numKinPhotoRxns(gasChemistryType)
         do kloop = 1, ktloop
-          trate(kloop,nk) = rrate(kloop,nk)
+          dummy(kloop,nk) = rrate(kloop,nk)
         end do
       end do
 
       do nkn = 1, nallr
         nk = oldRxnRateNum(nkn,gasChemistryType)
         do kloop = 1, ktloop
-          rrate(kloop,nkn) = trate(kloop,nk)
+          rrate(kloop,nkn) = dummy(kloop,nk)
         end do
       end do
 
-
-!     ----------------------------------------------------------------
-!     Set kinetic and photo rates where reaction has no active losses.
-!     ----------------------------------------------------------------
-
-      do nkn = nfdl0, nallr
-        nh = nkn + nallr
-        do kloop = 1, ktloop
-          trate(kloop,nkn) =  rrate(kloop,nkn)
-          trate(kloop,nh)  = -trate(kloop,nkn)
-        end do
-      end do
 
 
 !     ---------------------------------------------------------------

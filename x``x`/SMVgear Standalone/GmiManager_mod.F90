@@ -33,8 +33,6 @@ module GmiManager_mod
 
        ! private
        integer :: numErrTolDecreases
-
-
        integer :: numFailOldJacobian ! of times corrector failed to converge while the Jacobian was old
        integer :: jFail ! of times correcter failed to converge after old "Pderiv" was called
        integer :: numFailErrorTest
@@ -42,10 +40,6 @@ module GmiManager_mod
        integer :: numCallsPredict ! total # of times predictor is called
        integer :: numSuccessTdt ! numSuccessTdt    : total # of successful time steps taken
        integer :: numCallsVelocity ! total # of times velocity is called
-
-
-
-
        integer :: num1stOEqnsSolve !# of first-order eqns to solve, = # of spc = order of
                ! original matrix; num1stOEqnsSolve has a different value for day and
                ! night and for gas- and aqueous-phase chemistry;
@@ -200,8 +194,6 @@ contains
       integer:: jspc, kloop
       real*8  :: errymax
 
-      Write (6,*) 'testAccumulatedError called.'
-
       do kloop = 1, ktloop
          dely(kloop) = 0.0d0
       end do
@@ -244,8 +236,6 @@ contains
 
       real*8  :: rmsErrorPrevious, rmsrat
       integer :: kloop
-
-      Write (6,*) 'calculateNewRmsError called.'
 
       rmsErrorPrevious = this%rmsError
       this%der2max = 0.0d0
@@ -345,7 +335,6 @@ contains
       real*8, intent(in) :: maxRelChange
 
       real*8  :: hmtim
-      Write (6,*) 'calculateTimeStep called.'
 
       hmtim  = Min (this%maxTimeStep, this%timeremain)
       this%rdelt  = Min (this%rdelt, this%rdelmax, hmtim/delt)
@@ -383,8 +372,6 @@ contains
 
       real*8 :: eup ! pertst^2*order for one order higher than current order
       real*8  :: edwn ! pertst^2*order for one order lower  than current order
-
-      Write (6,*) 'updateCoefficients called.'
 
       this%nqqold = this%nqq
       this%kstep  = this%nqq + 1
@@ -431,8 +418,6 @@ contains
       integer :: kloop
       real*8  :: rmstop
       real*8  :: delt1
-
-      Write (6,*) 'calcInitialTimeStepSize called.'
 
       rmstop = 0.0d0
       do kloop = 1, ktloop
@@ -482,8 +467,6 @@ contains
       integer :: jspc
       real*8  :: errymax
 
-      Write (6,*) 'calculateErrorTolerances called.'
-
       ! abtoler1 = failureFraction * abtol(6,ncs) / Min (errmax, 1.0d-03)
       do kloop = 1, ktloop
          do jspc = 1, this%num1stOEqnsSolve
@@ -515,8 +498,6 @@ contains
       ! ----------------------
       type (Manager_type) :: this
       integer, intent(in)  :: ncs ! ncs is argument to Smvgear
-
-      Write (6,*) 'startTimeInterval called.'
 
       this%idoub     = 2
       this%nslp      = MBETWEEN
@@ -561,9 +542,6 @@ contains
          integer, intent(in)  :: ifsun ! ifsun is an argument to Smvgear
          real*8,  intent(in)  :: hmaxnit
 
-         Write (6,*) 'initializeGear called.'
-         print*, "initializing things"
-
          this%numFailOldJacobian     = 0
          this%jFail     = 0
          this%numFailErrorTest     = 0
@@ -578,7 +556,7 @@ contains
 
          ! MRD: derived from common block
          this%num1stOEqnsSolve    = numOrigSpcGtrOrEql1PdTerm(ncs)
-         print*, "num1stOEqunsSolve: ", this%num1stOEqnsSolve
+
          this%order     = this%num1stOEqnsSolve
          this%order_inv = 1.0d0 / this%num1stOEqnsSolve
 
