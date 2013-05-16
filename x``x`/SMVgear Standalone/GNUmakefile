@@ -1,3 +1,5 @@
+.PHONY : all gearproc clean
+
 SRCS=$(wildcard *.F90)
 OBJS=$(SRCS:.F90=.o)
 FC=ifort
@@ -18,7 +20,7 @@ PFUNIT_LFLAGS += -L$(PFUNIT)/lib -lpfunit
 EXE=Do_Smv2_Solver.exe
 
 F90FLAGS := $(F90FLAGS) -DDOREORD=$(DOREORD) -DBLOCKSIZE=$(BLOCKSIZE)
-all: $(OBJS) $(EXE)
+all: $(OBJS) $(EXE) gearproc
 
 %.o : %.F90
 	$(FC) $(F90FLAGS) -c $<
@@ -27,8 +29,7 @@ $(EXE): $(OBJS)
 	$(FC) $(F90FLAGS) $(PFUNIT_LFLAGS) -o $@ $(OBJS)
 
 gearproc:
-	cp gearproc.F90.ignoreme gearproc.F90
-	$(FC) $(F90FLAGS) -c gearproc.F90
+	make -C GearProc all
 	
 smv2chem_solver.o:timing_mod.o SmvChem_mod.o
 physproc.o:timing_mod.o GmiPrintError_mod.o
@@ -41,7 +42,8 @@ ChemTable_mod.o:Smv2Chem2_mod.o Smv2Chem1_mod.o
 #	$(FC) -c $(F90FLAGS_R8) timing_mod.F90
 
 clean:
-	rm -f *.o *.mod *.x
+	rm -f *.o *.mod *.x *.exe
+	make -C GearProc clean
 
 ifdef PFUNIT
   include $(PFUNIT)/include/pFUnit.makefile

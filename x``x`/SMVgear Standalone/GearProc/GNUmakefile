@@ -1,3 +1,5 @@
+.PHONY : all clean
+
 SRCS=$(wildcard *.F90)
 OBJS=$(SRCS:.F90=.o)
 FC=ifort
