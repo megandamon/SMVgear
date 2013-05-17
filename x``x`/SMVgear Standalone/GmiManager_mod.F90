@@ -25,6 +25,9 @@ module GmiManager_mod
    public :: testAccumulatedError
    public :: estimateTimeStepRatio
    public :: resetBeforeUpdate
+   public :: calcNewAbsoluteErrorTolerance
+   public :: scaleDerivatives
+   public :: updateChold
 
 ! MRD: add type bound procedures here
 ! can remove "_type"
@@ -94,6 +97,130 @@ module GmiManager_mod
 
 contains
 
+!-----------------------------------------------------------------------------
+!
+! ROUTINE
+!   updateChold
+! DESCRIPTION
+! Created by: Megan Rose Damon
+!-----------------------------------------------------------------------------
+   subroutine updateChold (this, ktloop, cnew, yabst)
+      type (Manager_type) :: this
+      integer, intent(in) :: ktloop
+      real*8,  intent(in) :: cnew  (KBLOOP, MXGSAER)
+      real*8, intent(in)  :: yabst (KBLOOP)
+
+      integer :: kloop, jspc
+
+      do kloop = 1, ktloop
+       do jspc = 1, this%num1stOEqnsSolve
+
+         this%chold(kloop,jspc) =  &
+  &        this%reltol3 /  &
+  &        (Max (cnew(kloop,jspc), 0.0d0) +  &
+  &         (yabst(kloop) * this%reltol2))
+
+       end do
+     end do
+
+   end subroutine updateChold
+
+!-----------------------------------------------------------------------------
+!
+! ROUTINE
+!   scaleDerivatives
+! DESCRIPTION
+! Created by: Megan Rose Damon
+! cnewDerivatives   : an array of length num1stOEqnsSolve*(MAXORD+1) that carries the
+!   derivatives of cnew, scaled by delt^j/factorial(j), where j is
+!   the jth derivative; j varies from 1 to nqq; e.g., conc(jspc,2)
+!   stores delt*y' (estimated)
+!-----------------------------------------------------------------------------
+   subroutine scaleDerivatives (this, ktloop, cnewDerivatives)
+      type (Manager_type) :: this
+      integer, intent(in)  :: ktloop
+      real*8, intent(inout)  :: cnewDerivatives  (KBLOOP, MXGSAER*7)
+
+      real*8  :: rdelta
+      integer :: i1, j, i, kloop
+
+      rdelta = 1.0d0
+      i1     = 1
+
+      do j = 2, this%kstep
+         rdelta = rdelta * this%rdelt
+         i1 = i1 + this%num1stOEqnsSolve
+          do i = i1, i1 + (this%num1stOEqnsSolve-1)
+            do kloop = 1, ktloop
+              cnewDerivatives(kloop,i) = cnewDerivatives(kloop,i) * rdelta
+            end do
+          end do
+      end do
+
+   end subroutine scaleDerivatives
+
+!-----------------------------------------------------------------------------
+!
+! ROUTINE
+!   calcNewAbsoluteErrorTolerance
+! DESCRIPTION
+! Created by: Megan Rose Damon
+!-----------------------------------------------------------------------------
+   subroutine  calcNewAbsoluteErrorTolerance (this, cnew, concAboveAbtolCount, ktloop, yabst, ncs)
+      type (Manager_type) :: this
+      real*8,  intent(in) :: cnew  (KBLOOP, MXGSAER)
+      integer, intent(inout) :: concAboveAbtolCount(KBLOOP, 5)
+      integer, intent(in)  :: ktloop
+      real*8, intent(out)  :: yabst (KBLOOP)
+      integer, intent(in)  :: ncs
+
+      integer :: jspc, kloop
+      integer :: k1, k2, k3, k4, k5, k
+      real*8  :: cnw
+
+      do k = 1, 5
+          do kloop = 1, ktloop
+            concAboveAbtolCount(kloop,k) = 0
+          end do
+      end do
+
+      do jspc = 1, this%num1stOEqnsSolve
+          do kloop = 1, ktloop
+            cnw = cnew(kloop,jspc)
+            do k = 1, 5
+               if (cnw > absoluteErrorTolerance(k,ncs)) then
+                 concAboveAbtolCount(kloop,k) = concAboveAbtolCount(kloop,k) + 1
+                 exit
+               end if
+            end do
+          end do
+        end do
+
+        do kloop = 1, ktloop
+
+          k1 = concAboveAbtolCount(kloop,1)
+          k2 = concAboveAbtolCount(kloop,2) + k1
+          k3 = concAboveAbtolCount(kloop,3) + k2
+          k4 = concAboveAbtolCount(kloop,4) + k3
+          k5 = concAboveAbtolCount(kloop,5) + k4
+
+          if (k1 > this%iabove) then
+            yabst(kloop) = absoluteErrorTolerance(1,ncs) ! MRD: these yabst should be passed in
+          else if (k2 > this%iabove) then    ! does the driver pass them in?
+            yabst(kloop) = absoluteErrorTolerance(2,ncs) ! or does the mechanism specify them
+          else if (k3 > this%iabove) then    ! tabled for now
+            yabst(kloop) = absoluteErrorTolerance(3,ncs)
+          else if (k4 > this%iabove) then
+            yabst(kloop) = absoluteErrorTolerance(4,ncs)
+          else if (k5 > this%iabove) then
+            yabst(kloop) = absoluteErrorTolerance(5,ncs)
+          else
+            yabst(kloop) = absoluteErrorTolerance(6,ncs)
+          end if
+
+        end do
+
+        end subroutine calcNewAbsoluteErrorTolerance
 !-----------------------------------------------------------------------------
 !
 ! ROUTINE

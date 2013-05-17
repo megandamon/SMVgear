@@ -256,10 +256,9 @@
       integer :: ibcb(IGAS)
 
 !     ------------------------------------------------
-!     kgrp : counts # of concs above abtol(i), i = 1..
+!     concAboveAbtolCount : counts # of concs above abtol(i), i = 1..
 !     ------------------------------------------------
-
-      integer :: kgrp(KBLOOP, 5)
+      integer :: concAboveAbtolCount(KBLOOP, 5)
 
 !     ------------------------------------------------------------------------
 !     delt      : current time step (s)
@@ -339,11 +338,10 @@
         end do
       end do
 
-! routine start restartTimeInterval
 !     --------------------------------------------------------------------
 !     Re-enter here if total failure or if restarting with new cell block.
 !     --------------------------------------------------------------------
-! 150 resets some stuff, then calls update
+!     150 resets some stuff, then calls update
 !     ========
  150  continue
 !     ========
@@ -358,8 +356,7 @@
 
 !!DIR$ INLINE
 
-		! K: Removed trate from Update call (no longer needed)
-      call Update  (ktloop, nallr, ncs, ncsp, jphotrat, pratk1, rrate)
+		call Update  (ktloop, nallr, ncs, ncsp, jphotrat, pratk1, rrate)
 
 !!DIR$ NOINLINE
 
@@ -370,9 +367,6 @@
 
       call velocity(mechanismObject, managerObject%num1stOEqnsSolve, ncsp, cnew, gloss, nfdh1)
       managerObject%numCallsVelocity = managerObject%numCallsVelocity + 1
-      ! MRD: can this be removed?
-		! K: Yes
-      ! mechanismObject%rateConstants = rrate
 
       call setBoundaryConditions (mechanismObject, itloop, jreorder, jlooplo, ilat, &
             & ilong, ntspec, ncs, inewold, do_semiss_inchem, gloss, yemis)
@@ -394,55 +388,7 @@
       IREORDIF: if (ireord /= 1) then
 !     ==========================
 
-        do k = 1, 5
-          do kloop = 1, ktloop
-            kgrp(kloop,k) = 0
-          end do
-        end do
-
-        do jspc = 1, managerObject%num1stOEqnsSolve
-          do kloop = 1, ktloop
-
-            cnw = cnew(kloop,jspc)
-
-            if (cnw > absoluteErrorTolerance(1,ncs)) then
-              kgrp(kloop,1) = kgrp(kloop,1) + 1
-            else if (cnw > absoluteErrorTolerance(2,ncs)) then
-              kgrp(kloop,2) = kgrp(kloop,2) + 1
-            else if (cnw > absoluteErrorTolerance(3,ncs)) then
-              kgrp(kloop,3) = kgrp(kloop,3) + 1
-            else if (cnw > absoluteErrorTolerance(4,ncs)) then
-              kgrp(kloop,4) = kgrp(kloop,4) + 1
-            else if (cnw > absoluteErrorTolerance(5,ncs)) then
-              kgrp(kloop,5) = kgrp(kloop,5) + 1
-            end if
-
-          end do
-        end do
-
-        do kloop = 1, ktloop
-
-          k1 = kgrp(kloop,1)
-          k2 = kgrp(kloop,2) + k1
-          k3 = kgrp(kloop,3) + k2
-          k4 = kgrp(kloop,4) + k3
-          k5 = kgrp(kloop,5) + k4
-
-          if (k1 > managerObject%iabove) then
-            yabst(kloop) = absoluteErrorTolerance(1,ncs) ! MRD: these yabst should be passed in
-          else if (k2 > managerObject%iabove) then    ! does the driver pass them in?
-            yabst(kloop) = absoluteErrorTolerance(2,ncs) ! or does the mechanism specify them
-          else if (k3 > managerObject%iabove) then    ! tabled for now
-            yabst(kloop) = absoluteErrorTolerance(3,ncs)
-          else if (k4 > managerObject%iabove) then
-            yabst(kloop) = absoluteErrorTolerance(4,ncs)
-          else if (k5 > managerObject%iabove) then
-            yabst(kloop) = absoluteErrorTolerance(5,ncs)
-          else
-            yabst(kloop) = absoluteErrorTolerance(6,ncs)
-          end if
-
-        end do
+      call calcNewAbsoluteErrorTolerance (managerObject, cnew, concAboveAbtolCount, ktloop, yabst, ncs)
 
         !MRD: see manager routine "calculateErrorTolerances"
         do kloop = 1, ktloop !*
@@ -513,33 +459,14 @@
       end if
 
 
-! routine start scalingDerivatives
 !     -------------------------------------------------------------------
 !     If the delt is different than during the last step (if rdelt /= 1),
 !     then scale the derivatives.
 !     -------------------------------------------------------------------
       if (prDiag) Write(*,*) "scaling derivatives"
       if (managerObject%rdelt /= 1.0d0) then
-
-        rdelta = 1.0d0
-        i1     = 1
-
-        do j = 2, managerObject%kstep
-
-          rdelta = rdelta * managerObject%rdelt
-          i1     = i1 + managerObject%num1stOEqnsSolve
-
-          do i = i1, i1 + (managerObject%num1stOEqnsSolve-1)
-            do kloop = 1, ktloop
-              conc(kloop,i) = conc(kloop,i) * rdelta
-            end do
-          end do
-
-        end do
-
+         call scaleDerivatives (managerObject, ktloop, conc)
       end if
-
-! routine end scalingDerivatives
 
 
 
@@ -562,75 +489,17 @@
 
         if (Mod (managerObject%numSuccessTdt, 3) == 2) then
 
-          do k = 1, 5
-            do kloop = 1, ktloop
-              kgrp(kloop,k) = 0
-            end do
-          end do
-
-          do jspc = 1, managerObject%num1stOEqnsSolve
-            do kloop = 1, ktloop
-
-              cnw = cnew(kloop,jspc)
-
-              if (cnw > absoluteErrorTolerance(1,ncs)) then
-                kgrp(kloop,1) = kgrp(kloop,1) + 1
-              else if (cnw > absoluteErrorTolerance(2,ncs)) then
-                kgrp(kloop,2) = kgrp(kloop,2) + 1
-              else if (cnw > absoluteErrorTolerance(3,ncs)) then
-                kgrp(kloop,3) = kgrp(kloop,3) + 1
-              else if (cnw > absoluteErrorTolerance(4,ncs)) then
-                kgrp(kloop,4) = kgrp(kloop,4) + 1
-              else if (cnw > absoluteErrorTolerance(5,ncs)) then
-                kgrp(kloop,5) = kgrp(kloop,5) + 1
-              end if
-
-            end do
-          end do
-
-          do kloop = 1, ktloop
-
-            k1 = kgrp(kloop,1)
-            k2 = kgrp(kloop,2) + k1
-            k3 = kgrp(kloop,3) + k2
-            k4 = kgrp(kloop,4) + k3
-            k5 = kgrp(kloop,5) + k4
-
-            if (k1 > managerObject%iabove) then
-              yabst(kloop) = absoluteErrorTolerance(1,ncs)
-            else if (k2 > managerObject%iabove) then
-              yabst(kloop) = absoluteErrorTolerance(2,ncs)
-            else if (k3 > managerObject%iabove) then
-              yabst(kloop) = absoluteErrorTolerance(3,ncs)
-            else if (k4 > managerObject%iabove) then
-              yabst(kloop) = absoluteErrorTolerance(4,ncs)
-            else if (k5 > managerObject%iabove) then
-              yabst(kloop) = absoluteErrorTolerance(5,ncs)
-            else
-              yabst(kloop) = absoluteErrorTolerance(6,ncs)
-            end if
-
-          end do
+            call calcNewAbsoluteErrorTolerance (managerObject, cnew, concAboveAbtolCount, &
+               &  ktloop, yabst, ncs)
 
         end if
 
-!c
-        do kloop = 1, ktloop
-          do jspc = 1, managerObject%num1stOEqnsSolve
-
-            managerObject%chold(kloop,jspc) =  &
-     &        managerObject%reltol3 /  &
-     &        (Max (cnew(kloop,jspc), 0.0d0) +  &
-     &         (yabst(kloop) * managerObject%reltol2))
-
-          end do
-        end do
+         call updateChold (managerObject, ktloop, cnew, yabst)
 
 !     ==================
       end if IFSUCCESSIF
 !     ==================
 
-! routine end resetDelMaxUpdateWithCnew
 
    ! routine start computePredictConcPascal
 !     ------------------------------------------------------------------
