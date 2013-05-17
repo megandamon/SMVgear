@@ -133,7 +133,7 @@
 !   errmx2   : measure of stiffness/nearness to convergence of each block
 !              sum ydot/y for all species (MRD per Kareem Sorathia)
 !   cc2      : array holding values of decomposed matrix
-!   cnew     : stores conc (y (estimated)) (molec/cm^3)
+!   cnew     : stores cnewDerivatives (y (estimated)) (molec/cm^3)
 !   gloss    : value of first derivatives on output from velocity; right-side
 !              of eqn on input to Backsub; error term (solution from Backsub)
 !              on output from Backsub
@@ -266,7 +266,6 @@
 !     order     : floating point value of num1stOEqnsSolve, the order of # of ODEs
 !     ------------------------------------------------------------------------
 
-      real*8  :: asnqqj
       real*8  :: cnewylow
       real*8  :: cnw
       real*8  :: consmult
@@ -290,9 +289,9 @@
 !     yabst  : absolute error tolerance (molec/cm^-3 for gases)!
 !     cest   : stores value of dtlos when idoub = 1
 !     explic : tbd
-!     conc   : an array of length num1stOEqnsSolve*(MAXORD+1) that carries the
+!     cnewDerivatives   : an array of length num1stOEqnsSolve*(MAXORD+1) that carries the
 !              derivatives of cnew, scaled by delt^j/factorial(j), where j is
-!              the jth derivative; j varies from 1 to nqq; e.g., conc(jspc,2)
+!              the jth derivative; j varies from 1 to nqq; e.g., cnewDerivatives(jspc,2)
 !              stores delt*y' (estimated)
 !     -------------------------------------------------------------------------
 
@@ -300,7 +299,7 @@
       real*8  :: yabst (KBLOOP)
       real*8  :: cest  (KBLOOP, MXGSAER)
       real*8  :: explic(KBLOOP, MXGSAER)
-      real*8  :: conc  (KBLOOP, MXGSAER*7)
+      real*8  :: cnewDerivatives  (KBLOOP, MXGSAER*7)
 
       type (Mechanism_type) :: mechanismObject
       type (Manager_type) :: managerObject
@@ -431,8 +430,8 @@
          j = jspc + managerObject%num1stOEqnsSolve
 
         do kloop = 1, ktloop
-          conc(kloop,jspc) = cnew(kloop,jspc)
-          conc(kloop,j)    = delt * gloss(kloop,jspc)
+          cnewDerivatives(kloop,jspc) = cnew(kloop,jspc)
+          cnewDerivatives(kloop,j)    = delt * gloss(kloop,jspc)
         end do
 
       end do
@@ -465,7 +464,7 @@
 !     -------------------------------------------------------------------
       if (prDiag) Write(*,*) "scaling derivatives"
       if (managerObject%rdelt /= 1.0d0) then
-         call scaleDerivatives (managerObject, ktloop, conc)
+         call scaleDerivatives (managerObject, ktloop, cnewDerivatives)
       end if
 
 
@@ -496,64 +495,10 @@
 
          call updateChold (managerObject, ktloop, cnew, yabst)
 
-!     ==================
       end if IFSUCCESSIF
-!     ==================
 
+      call predictConcAndDerivatives (managerObject, cnewDerivatives, explic, ktloop, prDiag)
 
-   ! routine start computePredictConcPascal
-!     ------------------------------------------------------------------
-!     Compute the predicted concentration and derivatives by multiplying
-!     previous values by the pascal triangle matrix.
-!     ------------------------------------------------------------------
-
-      if (prDiag) Write(*,*) "computing predicted conc and derivatives using pascal triangle matrix"
-      i1 = managerObject%nqqisc + 1
-
-      do jb = 1, managerObject%nqq - 1
-
-        i1 = i1 - managerObject%num1stOEqnsSolve
-
-        do i = i1,  managerObject%nqqisc
-
-          j = i + managerObject%num1stOEqnsSolve
-
-          do kloop = 1, ktloop
-            conc(kloop,i)  = conc(kloop,i) + conc(kloop,j)
-          end do
-
-        end do
-
-      end do
-
-      do jspc = 1,  managerObject%num1stOEqnsSolve
-
-        j = jspc + managerObject%num1stOEqnsSolve
-
-        do kloop = 1, ktloop
-          conc  (kloop,jspc) = conc(kloop,jspc) + conc(kloop,j)
-          explic(kloop,jspc) = conc(kloop,j)
-        end do
-
-      end do
-
-      do i = managerObject%num1stOEqnsSolve + 1, managerObject%nqqisc
-
-        j = i + managerObject%num1stOEqnsSolve
-
-        do kloop = 1, ktloop
-          conc(kloop,i) = conc(kloop,i) + conc(kloop,j)
-        end do
-
-      end do
-
-   ! routine end computePredictConcPascal
-!     ---------------------------------------
-
-
-
-   ! routine start correctionLoop
-!     ---------------------------------------
 
 !     -------------------------------------------------------------------
 !     Correction loop.
@@ -575,7 +520,7 @@
 
       do jspc = 1, managerObject%num1stOEqnsSolve
         do kloop = 1, ktloop
-          cnew (kloop,jspc) = conc(kloop,jspc)
+          cnew (kloop,jspc) = cnewDerivatives(kloop,jspc)
           managerObject%dtlos(kloop,jspc) = 0.0d0
         end do
       end do
@@ -605,9 +550,6 @@
               & npdhi(ncsp), npdlo(ncsp), r1delt, cc2)
          managerObject%numCallsPredict = managerObject%numCallsPredict+1
 
-         ! MRD: unclear to me why this is here; maybe cause problems
-         !mechanismObject%numRxns1 = nfdh2 + ioner(ncsp)
-
 			!K: Consider un-inlining this.
 !!DIR$   INLINE
 !       ===========
@@ -624,11 +566,6 @@
       end if
 
    ! routine end reEvalPredictor
-!     ---------------------------------------
-
-
-
-   ! routine start evalFirstDerivative
 !     ---------------------------------------
 
 !     -------------------------------------------------------------
@@ -659,7 +596,7 @@
 
         do kloop = 1, ktloop
           gloss(kloop,jspc) = (delt * gloss(kloop,jspc)) -  &
-     &                        (conc(kloop,j) + managerObject%dtlos(kloop,jspc))
+     &                        (cnewDerivatives(kloop,j) + managerObject%dtlos(kloop,jspc))
         end do
 
       end do
@@ -672,7 +609,7 @@
 !     Solve the linear system of equations with the corrector error;
 !     Backsub solves backsubstitution over matrix of partial derivs.
 !     --------------------------------------------------------------
-! MRD: goes in gear b/c manager doesn't know about backsubstitution
+! MRD: stays in gear b/c manager doesn't know about backsubstitution
 ! As part of gear's timestep it calls backsub
    if (prDiag) Write(*,*) "solve system of equations"
 !     ============
@@ -694,9 +631,9 @@
 
       ! MRD: removed an optimization for the case of asn1 = 1  (saves a multiplication per loop)
       do i = 1, managerObject%num1stOEqnsSolve !*
-         do kloop = 1, ktloop !*
+         do kloop = 1, ktloop
             managerObject%dtlos(kloop,i) = managerObject%dtlos(kloop,i) + gloss(kloop,i) !*
-            cnew(kloop,i)  = conc(kloop,i)  + (managerObject%asn1 * managerObject%dtlos(kloop,i))
+            cnew(kloop,i)  = cnewDerivatives(kloop,i)  + (managerObject%asn1 * managerObject%dtlos(kloop,i))
             errymax        = gloss(kloop,i) * managerObject%chold(kloop,i) !*
             dely(kloop)    = dely(kloop)    + (errymax * errymax) !*
          end do
@@ -764,23 +701,7 @@
         managerObject%xelaps    = managerObject%told
         managerObject%rdelt     = fracdec
 
-        i1 = managerObject%nqqisc + 1
-
-        do jb = 1, managerObject%nqq
-
-          i1 = i1 - managerObject%num1stOEqnsSolve
-
-          do i = i1, managerObject%nqqisc
-
-            j = i + managerObject%num1stOEqnsSolve
-
-            do kloop = 1, ktloop
-              conc(kloop,i) = conc(kloop,i) - conc(kloop,j)
-            end do
-
-          end do
-
-        end do
+        call resetCnewDerivatives(managerObject, cnewDerivatives, ktloop)
 
 !       =========
         go to 200 ! updateLimitTighten
@@ -825,27 +746,12 @@
 !     ==============================
       DER2MAXIF: if (managerObject%der2max > managerObject%enqq) then
 !     ==============================
-         if (prDiag) Write(*,*) "der2max > enqq"
+        if (prDiag) Write(*,*) "der2max > enqq"
         managerObject%xelaps = managerObject%told
         managerObject%numFailErrorTest  = managerObject%numFailErrorTest + 1
         managerObject%jFail  = managerObject%jFail  + 1
-        i1     = managerObject%nqqisc + 1
 
-        do jb = 1, managerObject%nqq
-
-          i1 = i1 - managerObject%num1stOEqnsSolve
-
-          do i = i1, managerObject%nqqisc
-
-            j = i + managerObject%num1stOEqnsSolve
-
-            do kloop = 1, ktloop
-              conc(kloop,i) = conc(kloop,i) - conc(kloop,j)
-            end do
-
-          end do
-
-        end do
+        call resetCnewDerivatives(managerObject, cnewDerivatives, ktloop)
 
         managerObject%rdelmax = 2.0d0
 
@@ -881,7 +787,7 @@
 
           do jspc = 1, managerObject%num1stOEqnsSolve
             do kloop = 1, ktloop
-              cnew(kloop,jspc) = conc(kloop,jspc)
+              cnew(kloop,jspc) = cnewDerivatives(kloop,jspc)
             end do
           end do
 
@@ -909,13 +815,6 @@
 !         =========
 
         end if
-
-                  ! routine end accumulatedErrorTestFailed
-!     -------------------------------------------------------------------
-
-                          ! routine start successfulStep
-!     -------------------------------------------------------------------
-
 
 !     ====
       else
@@ -946,54 +845,25 @@
 
         managerObject%jFail     = 0
         managerObject%ifsuccess = 1
-
         managerObject%numSuccessTdt    = managerObject%numSuccessTdt + 1
         managerObject%told      = managerObject%xelaps
 
-        i1 = 1
+        call updateDerivatives(managerObject, cnewDerivatives, ktloop)
 
-        do j = 2, managerObject%kstep
+         print*, ktloop
+         print*, managerObject%num1stOEqnsSolve
+         print*, sum(cnewDerivatives), sum(explic), sum(smvdm)
+         print*, sum(managerObject%dtlos), managerObject%asn1, prDiag
 
-          i1 = i1 + managerObject%num1stOEqnsSolve
+         ! TODO: Megan FIX this routine. Does not give 0 diff
+        !call updateChemistryMassBalance (ktloop, cnewDerivatives, explic, smvdm, &
+         !& prDiag, managerObject)
 
-          asnqqj = coeffsForIntegrationOrder(managerObject%nqq,j)
-
-          do jspc = 1, managerObject%num1stOEqnsSolve
-
-            i = jspc + i1 - 1
-
-            do kloop = 1, ktloop
-              conc(kloop,i) =  &
-     &          conc(kloop,i) + (asnqqj * managerObject%dtlos(kloop,jspc))
-            end do
-
-          end do
-
-        end do
-
-                                  ! routine end successfulStep
-!     -------------------------------------------------------------------
-
-
-                          ! routine start updateChemistryMassBalance
-!     -------------------------------------------------------------------
-!       ------------------------------
-!       Update chemistry mass balance.
-!       ------------------------------
-! belongs in gear
-! double check, but it looks like we can eliminate the first part
-if (prDiag) Write(*,*) "update chemistry mass balance"
-!K: Why are we relying on testing equality between real numbers?  That's silly.
-        if (managerObject%asn1 == 1.0d0) then
-
+       if (managerObject%asn1 == 1.0d0) then
           do i = 1, managerObject%num1stOEqnsSolve
             do kloop = 1, ktloop
-
-              smvdm(kloop,i) =  &
-     &          smvdm(kloop,i) + managerObject%dtlos(kloop,i) + explic(kloop,i)
-
-              conc(kloop,i) = conc(kloop,i) + managerObject%dtlos(kloop,i)
-
+              smvdm(kloop,i) = smvdm(kloop,i) + managerObject%dtlos(kloop,i) + explic(kloop,i)
+              cnewDerivatives(kloop,i) = cnewDerivatives(kloop,i) + managerObject%dtlos(kloop,i)
             end do
           end do
 
@@ -1001,18 +871,19 @@ if (prDiag) Write(*,*) "update chemistry mass balance"
 
           do i = 1, managerObject%num1stOEqnsSolve
             do kloop = 1, ktloop
-
               dtasn1         = managerObject%asn1 * managerObject%dtlos(kloop,i)
               smvdm(kloop,i) = smvdm(kloop,i) + dtasn1 + explic(kloop,i)
-              conc (kloop,i) = conc (kloop,i) + dtasn1
-
+              cnewDerivatives (kloop,i) = cnewDerivatives (kloop,i) + dtasn1
             end do
           end do
 
         end if
 
-! routine end updateChemistryMassBalance
-!     -------------------------------------------------------------------
+         print*, "after update"
+         print*, ktloop
+         print*, managerObject%num1stOEqnsSolve
+         print*, sum(cnewDerivatives), sum(explic), sum(smvdm)
+         print*, sum(managerObject%dtlos), managerObject%asn1, prDiag
 
 
 !       ---------------------------------------------------
@@ -1135,7 +1006,7 @@ if (prDiag) Write(*,*) "update chemistry mass balance"
 !     ========
  400  continue
 
-      call estimateTimeStepRatio (managerObject, ktloop, dely, conc)
+      call estimateTimeStepRatio (managerObject, ktloop, dely, cnewDerivatives)
 
 !     ---------------------------------------------------------------
 !     If the last step was successful and rdelt is small, keep the
@@ -1186,8 +1057,8 @@ if (prDiag) Write(*,*) "update chemistry mass balance"
           i2  = jg1  + nqisc
 
           do kloop = 1, ktloop
-            conc(kloop,i1) = managerObject%dtlos(kloop,jspc) * consmult
-            conc(kloop,i2) = managerObject%dtlos(kloop,jg1)  * consmult
+            cnewDerivatives(kloop,i1) = managerObject%dtlos(kloop,jspc) * consmult
+            cnewDerivatives(kloop,i2) = managerObject%dtlos(kloop,jg1)  * consmult
           end do
 
         end do
@@ -1213,7 +1084,49 @@ if (prDiag) Write(*,*) "update chemistry mass balance"
 
       end subroutine Smvgear
 
+      !   smvdm    : amount added to each spc at each grid-cell (# cm^-3 for gas chemistry (?))
+      subroutine updateChemistryMassBalance (ktloop, cnewDerivatives, explic, smvdm, &
+         & prDiag, managerObject)
 
+         use GmiManager_mod
+         implicit none
+
+#     include "smv2chem_par.h"
+
+         integer, intent(in) :: ktloop
+         real*8, intent(inout) :: cnewDerivatives(KBLOOP, MXGSAER*7)
+         real*8, intent(in) :: explic(KBLOOP, MXGSAER)
+         real*8, intent(inout) :: smvdm(KBLOOP, MXGSAER)
+         logical, intent(in) :: prDiag
+         type (Manager_type) :: managerObject
+
+         real :: dtasn1
+         integer :: i,kloop
+
+         ! double check, but it looks like we can eliminate the first part
+         if (prDiag) Write(*,*) "Update Chemistry Mass Balance"
+
+       if (managerObject%asn1 == 1.0d0) then
+          do i = 1, managerObject%num1stOEqnsSolve
+            do kloop = 1, ktloop
+              smvdm(kloop,i) = smvdm(kloop,i) + managerObject%dtlos(kloop,i) + explic(kloop,i)
+              cnewDerivatives(kloop,i) = cnewDerivatives(kloop,i) + managerObject%dtlos(kloop,i)
+            end do
+          end do
+
+        else
+
+          do i = 1, managerObject%num1stOEqnsSolve
+            do kloop = 1, ktloop
+              dtasn1         = managerObject%asn1 * managerObject%dtlos(kloop,i)
+              smvdm(kloop,i) = smvdm(kloop,i) + dtasn1 + explic(kloop,i)
+              cnewDerivatives (kloop,i) = cnewDerivatives (kloop,i) + dtasn1
+            end do
+          end do
+
+        end if
+
+      end subroutine
 
 
 
