@@ -40,7 +40,7 @@ module ChemTable_mod
 		integer :: nfdh3,nfdl2,nfdh2,nfdl1,nfdh1,nfdl0,nallr
 		integer :: nkn, nk, i,j,k, jspc, Sumin,Sumtemp
 		!Temp arrays to invert reaction mapping
-		integer :: SpcRxn(NNACT,NMTRATE),SpcRxnNum(NNACT),NumIntemp(NMTRATE),RxIntemp(RxnMaxIn,Nrxn)
+		integer :: SpcRxn(numActiveSpecies,NMTRATE),SpcRxnNum(numActiveSpecies),NumIntemp(NMTRATE),RxIntemp(RxnMaxIn,Nrxn)
 		integer :: NumFracOuts(NMTRATE),FracOutSpc(FracRxnMax,NMTRATE)
 		Real*8 :: FracRate(FracRxnMax,NMTRATE)
 		SpcRxnNum = 0
@@ -109,7 +109,7 @@ module ChemTable_mod
 		SpcRxn = -SpcRxn
 		!Now, negative values are input/positive values are output.  Abs value is reaction number
 
-		do i=1,NNACT
+		do i=1,numActiveSpecies
 			do j=1,SpcRxnNum(i)
 				k = SpcRxn(i,j)
 				if (k>0) then

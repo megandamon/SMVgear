@@ -29,7 +29,7 @@
      &  IGAS   = SK_IGAS,      & ! # of SmvgearII spc
      &  IPHOT  = SK_IPHOT,     & ! # of SmvgearII qjs
      &  ITHERM = SK_ITHERM,    & ! # of SmvgearII qks
-     &  NNACT  = SK_NACT     ! # of SmvgearII active spc
+     &  numActiveSpecies  = SK_NACT     ! # of SmvgearII active spc
 
 
 !     ---------------------------------------------------------------------

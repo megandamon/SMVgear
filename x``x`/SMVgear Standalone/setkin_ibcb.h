@@ -27,7 +27,7 @@
 !
       ibcb(:)           = 2
 
-      ibcb(NACT+1:IGAS) = 1
+      ibcb(numActiveSpecies+1:IGAS) = 1
 !
 !.... Reset boundary condition type for special cases
 !                CH4
