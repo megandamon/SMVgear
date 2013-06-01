@@ -31,6 +31,23 @@ module GmiManager_mod
    public :: predictConcAndDerivatives
    public :: resetCnewDerivatives
    public :: updateDerivatives
+   public :: determineInitialAbTol
+   public :: setInitialOrder
+   public :: initCorrector
+   public :: setConvergenceTerms
+   public :: sumAccumulatedError
+   public :: REORDER_GRID_CELLS, SOLVE_CHEMISTRY
+   public :: EVAL_PREDICTOR, DO_NOT_EVAL_PREDICTOR, PREDICTOR_JUST_CALLED
+
+   integer, parameter :: REORDER_GRID_CELLS = 1
+   integer, parameter :: SOLVE_CHEMISTRY = 2
+
+   ! MRD: do these belong here?
+   integer, parameter :: EVAL_PREDICTOR = 1
+   integer, parameter :: DO_NOT_EVAL_PREDICTOR = 0
+   integer, parameter :: PREDICTOR_JUST_CALLED = -1
+
+
 
 ! MRD: add type bound procedures here
 ! can remove "_type"
@@ -95,9 +112,160 @@ module GmiManager_mod
       real*8  :: rdeltdn ! time step ratio at one order lower  than current order
       real*8  :: rdeltup ! time step ratio at one order higher than current order
       integer :: ifsuccess ! identifies whether step is successful (=1) or not (=0)
+      real*8 :: tolerance (KBLOOP)
+      integer :: correctorIterations
     end type Manager_type
 
 contains
+
+!-----------------------------------------------------------------------------
+!
+! ROUTINE
+!   sumAccumulatedError
+! DESCRIPTION
+! Sum up the accumulated error, correct the concentration with the
+! error, and begin to calculate the rmsnorm of the error relative
+! to chold
+! Created by: Megan Rose Damon
+!-----------------------------------------------------------------------------
+   subroutine sumAccumulatedError(this, cnew, cnewDerivatives, dely, errymax, gloss, &
+                                 ktloop)
+      implicit none
+
+      type (Manager_type) :: this
+      real*8, intent(out) :: cnew(KBLOOP, MXGSAER)
+      real*8, intent(in) :: cnewDerivatives(KBLOOP, MXGSAER*7)
+      real*8, intent(inout) :: dely(KBLOOP)
+      real*8, intent(inout) :: errymax
+      real*8, intent(in) :: gloss(KBLOOP, MXGSAER)
+      integer, intent(in) :: ktloop
+
+      integer :: i, kloop
+
+      do kloop = 1, ktloop
+        dely(kloop) = 0.0d0
+      end do
+
+      do i = 1, this%num1stOEqnsSolve
+         do kloop = 1, ktloop
+            this%dtlos(kloop,i) = this%dtlos(kloop,i) + gloss(kloop,i) !*
+            cnew(kloop,i)  = cnewDerivatives(kloop,i)  + (this%asn1 * this%dtlos(kloop,i))
+            errymax        = gloss(kloop,i) * this%chold(kloop,i) !*
+            dely(kloop)    = dely(kloop)    + (errymax * errymax) !*
+         end do
+      end do
+
+   end subroutine sumAccumulatedError
+
+
+!-----------------------------------------------------------------------------
+!
+! ROUTINE
+!   setConvergenceTerms
+! DESCRIPTION
+! Created by: Megan Rose Damon
+!-----------------------------------------------------------------------------
+   subroutine setConvergenceTerms(this, maxAllowableSteps)
+      implicit none
+
+      type (Manager_type) :: this
+      integer, intent(in) :: maxAllowableSteps
+
+       this%hratio = 1.0d0
+       this%nslp   = this%numSuccessTdt + maxAllowableSteps
+       this%drate  = 0.7d0
+
+   end subroutine setConvergenceTerms
+
+!-----------------------------------------------------------------------------
+!
+! ROUTINE
+!   initCorrector
+! DESCRIPTION
+! Created by: Megan Rose Damon
+!-----------------------------------------------------------------------------
+   subroutine initCorrector(this, ktloop, concentrationsNew, cnewDerivatives)
+      implicit none
+
+      type (Manager_type) :: this
+      integer, intent(in) :: ktloop
+      real*8, intent(out) :: concentrationsNew(KBLOOP, MXGSAER)
+      real*8, intent(in) :: cnewDerivatives(KBLOOP, MXGSAER*7)
+
+      integer :: jspc, kloop
+
+      this%correctorIterations = 0
+      do jspc = 1, this%num1stOEqnsSolve
+        do kloop = 1, ktloop
+          concentrationsNew (kloop,jspc) = cnewDerivatives(kloop,jspc)
+          this%dtlos(kloop,jspc) = 0.0d0
+        end do
+      end do
+   end subroutine initCorrector
+
+!-----------------------------------------------------------------------------
+!
+! ROUTINE
+!   setInitialOrder
+! DESCRIPTION
+! Set initial order to 1
+! Created by: Megan Rose Damon
+!-----------------------------------------------------------------------------
+   subroutine setInitialOrder(this, evaluatePredictor)
+      implicit none
+
+      type (Manager_type) :: this
+      integer, intent(out) :: evaluatePredictor
+
+      this%nqqold = 0
+      this%nqq    = 1
+      this%rdelt  = 1.0d0
+
+      evaluatePredictor  = EVAL_PREDICTOR
+   end subroutine setInitialOrder
+
+
+!-----------------------------------------------------------------------------
+!
+! ROUTINE
+!   determineInitialAbTol
+! DESCRIPTION
+! Created by: Megan Rose Damon
+!-----------------------------------------------------------------------------
+      subroutine determineInitialAbTol(this, concentrationsNew, concAboveAbtolCount, &
+                                       & ireord, ktloop, ncs, yabst)
+         implicit none
+
+         type (Manager_type) :: this
+         real*8, intent(in) :: concentrationsNew(KBLOOP, MXGSAER)
+         integer, intent(inout) :: concAboveAbtolCount(KBLOOP, 5)
+         integer, intent(in) :: ireord
+         integer, intent(in) :: ktloop
+         integer, intent(in) :: ncs
+         real*8, intent(inout) :: yabst(KBLOOP)
+
+         integer :: kloop
+
+         if (ireord == SOLVE_CHEMISTRY) then
+            call calcNewAbsoluteErrorTolerance (this, concentrationsNew, concAboveAbtolCount, ktloop, yabst, ncs)
+            do kloop = 1, ktloop
+               this%tolerance(kloop) = yabst(kloop) * this%reltol1
+            end do
+         else
+            do kloop = 1, ktloop
+               this%tolerance(kloop) = this%abtoler1
+            end do
+         end if
+
+      end subroutine determineInitialAbTol
+
+!-----------------------------------------------------------------------------
+!
+! ROUTINE
+!   updateDerivatives
+! DESCRIPTION
+! Created by: Megan Rose Damon
+!-----------------------------------------------------------------------------
 
       subroutine updateDerivatives(this, cnewDerivatives, ktloop)
          implicit none
@@ -666,44 +834,32 @@ contains
 ! It is conceviable that there could be different norms or error criteria
 ! Created by: Megan Rose Damon
 !   ktloop   : # of grid-cells in a grid-block
-!   jlooplo  : low ntloop grid-cell - 1 in a grid-block
-!   itloop   : # of zones (ilong * ilat * ivert)
 !   cnew     : stores conc (y (estimated)) (molec/cm^3)
 !   gloss    : value of first derivatives on output from velocity; right-side
 !              of eqn on input to Backsub; error term (solution from Backsub)
 !              on output from Backsub
 !   dely     : TBD
-!   errmx2   : measure of stiffness/nearness to convergence of each block
-!              sum ydot/y for all species
 !-----------------------------------------------------------------------------
-   subroutine calculateErrorTolerances (this, ktloop, jlooplo, itloop, cnew, gloss, dely, errmx2)
+   subroutine calculateErrorTolerances (this, ktloop, cnew, gloss, dely)
 
       ! ----------------------
       ! Argument declarations.
       ! ----------------------
       type (Manager_type) :: this
       integer, intent(in)  :: ktloop
-      integer, intent(in)  :: jlooplo
-      integer, intent(in)  :: itloop
       real*8, intent(in) :: cnew  (KBLOOP, MXGSAER)
       real*8, intent(in) :: gloss (KBLOOP, MXGSAER)
       real*8, intent(inout)  :: dely  (KBLOOP)
-      real*8, intent(inout) :: errmx2(itloop)
 
       integer :: kloop
       integer :: jspc
       real*8  :: errymax
 
-      ! abtoler1 = failureFraction * abtol(6,ncs) / Min (errmax, 1.0d-03)
       do kloop = 1, ktloop
          do jspc = 1, this%num1stOEqnsSolve
-            errymax     = gloss(kloop,jspc) / (cnew(kloop,jspc) + this%abtoler1)
+            errymax     = gloss(kloop,jspc) / (cnew(kloop,jspc) + this%tolerance(kloop))
             dely(kloop) = dely(kloop) + (errymax * errymax)
          end do
-       end do
-
-       do kloop = 1, ktloop
-         errmx2(jlooplo+kloop) = dely(kloop)
        end do
 
    end subroutine calculateErrorTolerances

@@ -46,8 +46,8 @@ contains
 ! NOTES: MRD: solver should not know number of reactions
 !-----------------------------------------------------------------------------
 
-      subroutine calculatePredictor (nondiag, iarry, mechObject, cx, &
-      & npdh, npdl, r1delt, Predict)
+      subroutine calculatePredictor (nondiag, iarry, ktloop, cx, &
+      & npdh, npdl, r1delt, Predict, rateConstants)
 
       use Smv2Chem2_mod
 		use ChemTable_mod
@@ -61,22 +61,20 @@ contains
          integer, intent(in) :: nondiag     ! # of final matrix positions, excluding diagonal
                              ! terms, filled after all matrix processes
          integer, intent(in) :: iarry
-			type (Mechanism_type), intent(in) :: mechObject
+         integer, intent(in) :: ktloop
 			real*8, intent(in)  :: cx(KBLOOP,MXGSAER)
          integer, intent(in) :: npdh, npdl
-
          real*8,  intent(in)  :: r1delt
          real*8,  intent(inout) :: Predict (KBLOOP, 0:MXARRAY)
+         real*8  :: rateConstants (KBLOOP, NMTRATE)
 
 
 !     ----------------------
 !     Variable declarations.
 !     ----------------------
-         integer :: iar, k, n, nkn, ial,ktloop, nin, ina, inb
+         integer :: iar, k, n, nkn, ial, nin, ina, inb
          real*8  :: fracr1
-		
 
-			ktloop = mechObject%numGridCellsInBlock
 
          ! list of non-zero values
          ! MRD: derived type that combines the predictor below,
@@ -111,12 +109,11 @@ contains
 							ina = GenChem%RxnIn(1,nkn)
 						end if
 						do k=1, ktloop
-							Predict(k,iar) = Predict(k,iar) + fracr1* &
-							& mechObject%rateConstants(k,nkn)*cx(k,ina)
+							Predict(k,iar) = Predict(k,iar) + fracr1* rateConstants(k,nkn) * cx(k,ina)
 						end do
 					case(1) !Only one var to take deriv wrt
 						do k=1, ktloop
-							Predict(k,iar) = Predict(k,iar)+ (fracr1*mechObject%rateConstants(k,nkn))
+							Predict(k,iar) = Predict(k,iar)+ (fracr1*rateConstants(k,nkn))
 						end do
 					case(3)
 						if (ial .eq. 1) then
@@ -131,7 +128,7 @@ contains
 						endif
 						do k=1, ktloop
 							Predict(k,iar) = Predict(k,iar) + fracr1* &
-							& mechObject%rateConstants(k,nkn)*cx(k,ina)*cx(k,inb)
+							& rateConstants(k,nkn)*cx(k,ina)*cx(k,inb)
 						end do
 				end select
 

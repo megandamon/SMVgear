@@ -33,7 +33,7 @@ gearproc:
 	
 smv2chem_solver.o:timing_mod.o SmvChem_mod.o
 physproc.o:timing_mod.o GmiPrintError_mod.o
-smvgear.o:GmiPrintError_mod.o GmiMechanism_mod.o GmiSparseMatrix_mod.o
+smvgear.o:GmiPrintError_mod.o GmiMechanism_mod.o GmiSparseMatrix_mod.o GmiManager_mod.o
 GmiManager_mod.o:GmiPrintError_mod.o Smv2Chem2_mod.o
 SmvChem_mod.o:GmiPrintError_mod.o
 ChemTable_mod.o:Smv2Chem2_mod.o Smv2Chem1_mod.o

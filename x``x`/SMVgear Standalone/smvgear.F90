@@ -1,4 +1,3 @@
-
 !=============================================================================
 !
 ! $Id: smvgear.F90,v 1.1.1.1 2008-02-12 16:06:36 trayanov Exp $
@@ -229,18 +228,10 @@
 !     Variable declarations.
 !     ----------------------
 
-!     ------------------------------------------------------------------------
-!
-!     jeval     :  1 => call Pderiv the next time through the corrector steps;
-!                  0 => last step successful and do not need to call Pderiv;
-!                 -1 => Pderiv just called, and do not need to call again
-!                  until jeval switched to 1
-!     ------------------------------------------------------------------------
-
       integer :: i, j, k
       integer :: i1, i2
       integer :: jb
-      integer :: jeval
+      integer :: evaluatePredictor
       integer :: jg1
       integer :: jgas
       integer :: jnew
@@ -248,7 +239,6 @@
       integer :: k1, k2, k3, k4, k5
       integer :: kloop
       integer :: kstepisc
-      integer :: l3
       integer :: ncsp  ! ncs       => for daytime   gas chemistry
                        ! ncs + ICS => for nighttime gas chemistry
       integer :: nqisc
@@ -260,15 +250,13 @@
       integer :: concAboveAbtolCount(KBLOOP, 5)
 
 !     ------------------------------------------------------------------------
-!     delt      : current time step (s)
-!     MAX_REL_CHANGE     : max relative change in delt*aset(1) before Pderiv is called
+!     MAX_REL_CHANGE     : max relative change in currentTimeStep*aset(1) before Pderiv is called
 !     order     : floating point value of num1stOEqnsSolve, the order of # of ODEs
 !     ------------------------------------------------------------------------
 
-      real*8  :: cnewylow
       real*8  :: cnw
       real*8  :: consmult
-      real*8  :: delt
+      real*8  :: currentTimeStep
       real*8  :: dtasn1
       real*8  :: der1max, der3max
       real*8  :: errymax
@@ -289,9 +277,9 @@
 !     cest   : stores value of dtlos when idoub = 1
 !     explic : tbd
 !     cnewDerivatives   : an array of length num1stOEqnsSolve*(MAXORD+1) that carries the
-!              derivatives of cnew, scaled by delt^j/factorial(j), where j is
+!              derivatives of cnew, scaled by currentTimeStep^j/factorial(j), where j is
 !              the jth derivative; j varies from 1 to nqq; e.g., cnewDerivatives(jspc,2)
-!              stores delt*y' (estimated)
+!              stores currentTimeStep*y' (estimated)
 !     -------------------------------------------------------------------------
 
       real*8  :: dely  (KBLOOP)
@@ -304,12 +292,10 @@
       type (Manager_type) :: managerObject
       integer :: nondiag     ! # of final matrix positions, excluding diagonal
 
+#     include "setkin_ibcb.h"
+
       call initializeMechanism (mechanismObject, ktloop, irma, &
                               &  irmb, irmc, nfdh2, nfdh3, nfdrep, rrate)
-
-!     =======================
-#     include "setkin_ibcb.h"
-!     =======================
 
       call resetGear (managerObject, ncsp, ncs, ifsun, hmaxnit)
 
@@ -337,358 +323,153 @@
       call setBoundaryConditions (mechanismObject, itloop, jreorder, jlooplo, ilat, &
             & ilong, ntspec, ncs, inewold, do_semiss_inchem, gloss, yemis)
 
-
-! MRD: Take the reordering and error/tolerance calculations and keep them in the solver for now
-!     -------------------------------------------
-!     Determine initial absolute error tolerance.
-!     -------------------------------------------
-
-      !do kloop = 1, ktloop
-      !  dely(kloop) = 0.0d0
-      !end do
-
-! get rid of magic number 1
-! refactor this into routine(s) smvgear until we deterine their resting place.
-! probably goes in the manager, possibly in gear
-!     ==========================
-      IREORDIF: if (ireord /= 1) then
-!     ==========================
-
-      call calcNewAbsoluteErrorTolerance (managerObject, cnew, concAboveAbtolCount, ktloop, yabst, ncs)
-
-        !MRD: see manager routine "calculateErrorTolerances"
-        do kloop = 1, ktloop !*
-          dely(kloop) = 0.0d0
-          do jspc = 1, managerObject%num1stOEqnsSolve !*
-            cnewylow    = cnew (kloop,jspc) + (yabst(kloop) * managerObject%reltol1)
-            errymax     = gloss(kloop,jspc) / cnewylow
-            dely(kloop) = dely (kloop) + (errymax * errymax) ! this is an error (not a tolerance)
-          end do
-        end do
-
-
-!     ====
-      else
-!     ====
-
-
-      call calculateErrorTolerances (managerObject, ktloop, jlooplo, itloop, cnew, gloss, dely, errmx2)
-      return
-
-!     ===============
-      end if IREORDIF
-!     ===============
-
-      call calcInitialTimeStepSize (managerObject, ktloop, dely, delt, ncs)
-!     -----------------------
-!     Set initial order to 1.
-!     -----------------------
-
-      managerObject%nqqold = 0
-      managerObject%nqq    = 1
-      jeval  = 1
-      managerObject%rdelt  = 1.0d0
-
-
-!     --------------------------------------------------------------
-!     Store initial concentration and first derivatives x time step.
-!     --------------------------------------------------------------
-
-      do jspc = 1, managerObject%num1stOEqnsSolve
-         j = jspc + managerObject%num1stOEqnsSolve
-
-        do kloop = 1, ktloop
-          cnewDerivatives(kloop,jspc) = cnew(kloop,jspc)
-          cnewDerivatives(kloop,j)    = delt * gloss(kloop,jspc)
-        end do
-
+      do kloop = 1, ktloop
+         dely(kloop) = 0.0d0
       end do
 
+      call determineInitialAbTol(managerObject, cnew, concAboveAbtolCount, ireord, ktloop, ncs, yabst)
 
-!     ========
- 200  continue
-!     ========
+      call calculateErrorTolerances (managerObject, ktloop, cnew, gloss, dely)
 
-      if (prDiag) Write(*,*) "in continue 200"
-
-
-      if (managerObject%nqq /= managerObject%nqqold) call updateCoefficients (managerObject)
-      call calculateTimeStep (managerObject, delt, jeval, MAX_REL_CHANGE)
-
-
-
-      if (prDiag) Write(*,*) "tightening absolute error tolerance"
-      if (delt < HMIN) then
-        call tightenErrorTolerance (managerObject, pr_smv2, lunsmv, ncs, delt)
-        !     ========================================
-        go to 100 ! routine start startTimeInterval?
-        !     ========================================
+      if (ireord /= SOLVE_CHEMISTRY) then
+         do kloop = 1, ktloop
+            errmx2(jlooplo+kloop) = dely(kloop)
+         end do
+         return
       end if
 
+      call calcInitialTimeStepSize (managerObject, ktloop, dely, currentTimeStep, ncs)
+      call setInitialOrder (managerObject, evaluatePredictor)
+      call storeInitConcAndDerivatives(managerObject%num1stOEqnsSolve, ktloop, cnewDerivatives, cnew, currentTimeStep, gloss)
 
-!     -------------------------------------------------------------------
-!     If the delt is different than during the last step (if rdelt /= 1),
-!     then scale the derivatives.
-!     -------------------------------------------------------------------
-      if (prDiag) Write(*,*) "scaling derivatives"
+
+ 200  continue
+
+      if (managerObject%nqq /= managerObject%nqqold) call updateCoefficients (managerObject)
+
+      call calculateTimeStep (managerObject, currentTimeStep, evaluatePredictor, MAX_REL_CHANGE)
+      if (currentTimeStep < HMIN) then
+        call tightenErrorTolerance (managerObject, pr_smv2, lunsmv, ncs, currentTimeStep)
+        go to 100
+      end if
+
       if (managerObject%rdelt /= 1.0d0) then
          call scaleDerivatives (managerObject, ktloop, cnewDerivatives)
       end if
 
+      if (managerObject%ifsuccess == 1) then
+         managerObject%rdelmax = 10.0d0
 
-
-! routine start resetDelMaxUpdateWithCnew
-
-!     --------------------------------------------------------------
-!     If the last step was successful, reset rdelmax = 10 and update
-!     the chold array with current values of cnew.
-!     --------------------------------------------------------------
-   if (prDiag) Write(*,*) "last time step was successful"
-!     ================================
-      IFSUCCESSIF: if (managerObject%ifsuccess == 1) then
-!     ================================
-
-        managerObject%rdelmax = 10.0d0
-
-!       ---------------------------------------
-!       Determine new absolute error tolerance.
-!       ---------------------------------------
-
-        if (Mod (managerObject%numSuccessTdt, 3) == 2) then
-
+         if (Mod (managerObject%numSuccessTdt, 3) == 2) then
             call calcNewAbsoluteErrorTolerance (managerObject, cnew, concAboveAbtolCount, &
                &  ktloop, yabst, ncs)
-
-        end if
+         end if
 
          call updateChold (managerObject, ktloop, cnew, yabst)
-
-      end if IFSUCCESSIF
+      end if
 
       call predictConcAndDerivatives (managerObject, cnewDerivatives, explic, ktloop, prDiag)
 
 
-!     -------------------------------------------------------------------
-!     Correction loop.
-!
-!     Take up to 3 corrector iterations.  Test convergence by requiring
-!     that changes be less than the rms norm weighted by chold.
-!     Accumulate the correction in the array dtlos.  It equals the
-!     jth derivative of concentration multiplied by delt^kstep /
-!     (factorial(kstep-1) * aset(kstep)); thus, it is proportional to the
-!     actual errors to the lowest power of delt present (delt^kstep).
-!     -------------------------------------------------------------------
+ 250  continue
 
+      call initCorrector (managerObject, ktloop, cnew, cnewDerivatives)
 
-!     ========
- 250  continue ! correctionLoop
-!     ========
+      ! Re-evaluate predictor matrix before starting the corrector iteration.
+      if (evaluatePredictor == EVAL_PREDICTOR) then
 
-      l3 = 0
-      do jspc = 1, managerObject%num1stOEqnsSolve
-        do kloop = 1, ktloop
-          cnew (kloop,jspc) = cnewDerivatives(kloop,jspc)
-          managerObject%dtlos(kloop,jspc) = 0.0d0
-        end do
-      end do
-   ! routine stop correctionLoop
-
-   ! routine start reEvalPredictor
-!     ---------------------------------------
-
-   ! routine start reEvalPredictor
-!     ---------------------------------------
-
-!     ------------------------------------------------------------------
-!     If jeval = 1, re-evaluate predictor matrix P = I - H * aset(1) * J
-!     before starting the corrector iteration.  After calling Pderiv,
-!     set jeval = -1 to prevent recalling Pderiv unless necessary later.
-!     Call Decomp to decompose the matrix.
-!     ------------------------------------------------------------------
-
-      if (jeval == 1) then
-
-         if (prDiag) Write(*,*) "re-evalulate predictor matrix"
-         r1delt = -managerObject%asn1 * delt
+         r1delt = -managerObject%asn1 * currentTimeStep
          nondiag  = sparseMatrixDimension(ncsp) - managerObject%num1stOEqnsSolve
 
-         !K: Need to send whole mech object to get rrate in predictor, also need cnew
-         call calculatePredictor(nondiag,sparseMatrixDimension(ncsp),mechanismObject, cnew, &
-              & npdhi(ncsp), npdlo(ncsp), r1delt, cc2)
-         managerObject%numCallsPredict = managerObject%numCallsPredict+1
+         call calculatePredictor (nondiag, sparseMatrixDimension(ncsp), &
+               & ktloop, cnew, npdhi(ncsp), npdlo(ncsp), r1delt, cc2, &
+               & mechanismObject%rateConstants)
 
-			!K: Consider un-inlining this.
+         managerObject%numCallsPredict = managerObject%numCallsPredict + 1
+         evaluatePredictor  = PREDICTOR_JUST_CALLED
+
+! K: Consider un-inlining this.
 !!DIR$   INLINE
-!       ===========
-        call Decomp  &
-!       ===========
-     &    (managerObject%num1stOEqnsSolve, ktloop, ncsp, cc2, vdiag)
-!!DIR$   NOINLINE4
+        call Decomp  (managerObject%num1stOEqnsSolve, ktloop, ncsp, cc2, vdiag)
+!!DIR$   NOINLINE
 
-        jeval  = -1
-        managerObject%hratio = 1.0d0
-        managerObject%nslp   = managerObject%numSuccessTdt + MBETWEEN
-        managerObject%drate  = 0.7d0
+        call setConvergenceTerms (managerObject, MBETWEEN)
 
       end if
 
-   ! routine end reEvalPredictor
-!     ---------------------------------------
 
-!     -------------------------------------------------------------
-!     Evaluate the first derivative using corrected values of cnew.
-!     -------------------------------------------------------------
-
-!     ========
  300  continue
-!     ========
 
-      if (prDiag) Write(*,*) "in 300, evaluating first derivative"
+      ! Evaluate the first derivative using corrected values of cnew.
       call velocity (mechanismObject, managerObject%num1stOEqnsSolve, ncsp, cnew, gloss, nfdh1)
-
       managerObject%numCallsVelocity = managerObject%numCallsVelocity + 1
 
       call setBoundaryConditions (mechanismObject, itloop, jreorder, jlooplo, ilat, &
                & ilong, ntspec, ncs, inewold, do_semiss_inchem, gloss, yemis)
 
+      call computeErrorFromCorrected1stDeriv (managerObject%num1stOEqnsSolve, ktloop, &
+               gloss, currentTimeStep, cnewDerivatives, managerObject%dtlos)
 
-!     ---------------------------------------------------------------
-!     In the case of the chord method, compute error (gloss) from the
-!     corrected calculation of the first derivative.
-!     ---------------------------------------------------------------
+      call Backsub (managerObject%num1stOEqnsSolve, ktloop, ncsp, cc2, vdiag, gloss)
 
-      do jspc = 1, managerObject%num1stOEqnsSolve
+      call sumAccumulatedError (managerObject, cnew, cnewDerivatives, dely, errymax, gloss, &
+                                 ktloop)
 
-        j = jspc + managerObject%num1stOEqnsSolve
-
-        do kloop = 1, ktloop
-          gloss(kloop,jspc) = (delt * gloss(kloop,jspc)) -  &
-     &                        (cnewDerivatives(kloop,j) + managerObject%dtlos(kloop,jspc))
-        end do
-
-      end do
+      call calculateNewRmsError (managerObject, ktloop, dely, managerObject%correctorIterations)
 
 
-   ! routine end evalFirstDerivative
-!     ---------------------------------------
-
-!     --------------------------------------------------------------
-!     Solve the linear system of equations with the corrector error;
-!     Backsub solves backsubstitution over matrix of partial derivs.
-!     --------------------------------------------------------------
-! MRD: stays in gear b/c manager doesn't know about backsubstitution
-! As part of gear's timestep it calls backsub
-   if (prDiag) Write(*,*) "solve system of equations"
-!     ============
-      call Backsub  & ! MRD: rename to solve? per Tom.
-!     ============
-     &  (managerObject%num1stOEqnsSolve, ktloop, ncsp, cc2, vdiag, gloss)
-   ! routine start sumAccumError
-!     ---------------------------------------
-!     ----------------------------------------------------------------
-!     Sum up the accumulated error, correct the concentration with the
-!     error, and begin to calculate the rmsnorm of the error relative
-!     to chold.
-!     ----------------------------------------------------------------
-      if (prDiag) Write(*,*) "accumulating error"
-
-      do kloop = 1, ktloop
-        dely(kloop) = 0.0d0
-      end do
-
-      ! MRD: removed an optimization for the case of asn1 = 1  (saves a multiplication per loop)
-      do i = 1, managerObject%num1stOEqnsSolve !*
-         do kloop = 1, ktloop
-            managerObject%dtlos(kloop,i) = managerObject%dtlos(kloop,i) + gloss(kloop,i) !*
-            cnew(kloop,i)  = cnewDerivatives(kloop,i)  + (managerObject%asn1 * managerObject%dtlos(kloop,i))
-            errymax        = gloss(kloop,i) * managerObject%chold(kloop,i) !*
-            dely(kloop)    = dely(kloop)    + (errymax * errymax) !*
-         end do
-      end do
+! MRD: the comments below may be misleading.
 
 
-   ! routine end sumAccumError
-!     ---------------------------------------
+      if (managerObject%dcon > 1.0d0) then ! non-convergence
+
+        ! If nonconvergence after one step, re-evaluate first derivative with new values of cnew.
+        if (managerObject%correctorIterations == 1) then
+
+          go to 300 ! re-eval first derivative (calls velocity)
 
 
-      call calculateNewRmsError (managerObject, ktloop, dely, l3)
-
-
-   ! routine start checkAccumulatedError
-!     ---------------------------------------
-
-
-!     --------------------------------------------------------
-!     If convergence occurs, go on to check accumulated error.
-!     --------------------------------------------------------
-
-      if (managerObject%dcon > 1.0d0) then
-      if (prDiag) Write(*,*) "convergence"
-!       -------------------------------------------------------------------
-!       If nonconvergence after one step, re-evaluate first derivative with
-!       new values of cnew.
-!       -------------------------------------------------------------------
-
-        if (l3 == 1) then
-        if (prDiag) Write(*,*) "re evaulate first deriviatives"
-
-!         =========
-          go to 300 !evalFirstDerivative
-!         =========
-
-!         ----------------------------------------------------------------
-!         The corrector iteration failed to converge.
-!
-!         If the Jacobian matrix is more than one step old, update the
-!         Jacobian and try convergence again.  If the Jacobian is current,
-!         then reduce the time step, reset the accumulated derivatives to
-!         their values before the failed step, and retry with the smaller
-!         step.
-!         ----------------------------------------------------------------
-
-        else if (jeval == 0) then
-         if (prDiag) Write(*,*) "conversion failure"
+         ! If the Jacobian (predictor?) matrix is more than one step old, update it,
+         !  and try convergence again.
+        else if (evaluatePredictor == DO_NOT_EVAL_PREDICTOR) then
 
           managerObject%numFailOldJacobian = managerObject%numFailOldJacobian + 1
-          jeval = 1
+          evaluatePredictor = 1
 
-!         =========
-          go to  250 ! correctionLoop
-!         =========
+          go to  250 ! calls corrector loop / re-evaluates predictor
 
         end if
 
-           ! routine stop checkAccumulatedError
-!     ---------------------------------------
+         ! if the Jacobian is current, then reduce the time step,
+         ! reset the accumulated derivatives to their values before the failed step,
+         ! and retry with the smaller step.
+
 
         managerObject%numFailAfterPredict     = managerObject%numFailAfterPredict + 1
         managerObject%rdelmax   = 2.0d0
-        jeval     = 1
         managerObject%ifsuccess = 0
         managerObject%xelaps    = managerObject%told
         managerObject%rdelt     = fracdec
 
+        evaluatePredictor     = EVAL_PREDICTOR
         call resetCnewDerivatives(managerObject, cnewDerivatives, ktloop)
 
-!       =========
-        go to 200 ! updateLimitTighten
-!       =========
+        go to 200 ! tighten limit, then re-evaluate the predictor, then call velocity
 
       end if
 
 
-   ! routine end checkAccumulatedError
-!     ---------------------------------------
 
 !     -------------------------------------------------------------------
 !     The corrector iteration converged.
 !
-!     Set jeval = 0, so that it does not need to be called the next step.
+!     Set evaluatePredictor, so that it does not need to be called the next step.
 !     If all else goes well.
 !     -------------------------------------------------------------------
+!     If convergence occurs, go on to check accumulated error?
 
-      jeval = 0
-      if (l3 > 1) then
+      evaluatePredictor = DO_NOT_EVAL_PREDICTOR
+      if (managerObject%correctorIterations > 1) then
          call testAccumulatedError (managerObject, ktloop, dely)
       end if
 
@@ -746,7 +527,7 @@
 
         else
 
-          delt    = delt * 0.1d0
+          currentTimeStep    = currentTimeStep * 0.1d0
           managerObject%rdelt   = 1.0d0
           managerObject%jFail   = 0
           managerObject%jrestar = managerObject%jrestar + 1
@@ -759,7 +540,7 @@
           end do
 
           if (pr_smv2) then
-            Write (lunsmv,970) delt, managerObject%xelaps
+            Write (lunsmv,970) currentTimeStep, managerObject%xelaps
           end if
 
  970      format ('delt dec to ', e13.5, ' at time ', e13.5,  &
@@ -1050,6 +831,82 @@
       return
 
       end subroutine Smvgear
+
+
+
+
+
+!-----------------------------------------------------------------------------
+!
+! ROUTINE
+!   computeErrorFromCorrected1stDeriv
+! DESCRIPTION
+! In the case of the chord method, compute error (gloss) from the
+! corrected calculation of the first derivative.
+! Created by: Megan Rose Damon
+!-----------------------------------------------------------------------------
+      subroutine computeErrorFromCorrected1stDeriv (num1stOEqnsSolve, ktloop, gloss, &
+                  & currentTimeStep, cnewDerivatives, dtlos)
+
+         implicit none
+#     include "smv2chem_par.h"
+
+         integer, intent(in) :: num1stOEqnsSolve, ktloop
+         real*8, intent(inout) :: gloss (KBLOOP, MXGSAER)
+         real*8, intent(in) :: currentTimeStep
+         real*8, intent(in) :: cnewDerivatives(KBLOOP, MXGSAER*7)
+         real*8, intent(in)  :: dtlos (KBLOOP, MXGSAER)!
+
+         integer jspc, j, kloop
+
+         do jspc = 1, num1stOEqnsSolve
+           j = jspc + num1stOEqnsSolve
+           do kloop = 1, ktloop
+             gloss(kloop,jspc) = (currentTimeStep * gloss(kloop,jspc)) -  &
+                  (cnewDerivatives(kloop,j) + dtlos(kloop,jspc))
+           end do
+         end do
+
+      end subroutine computeErrorFromCorrected1stDeriv
+
+
+
+!-----------------------------------------------------------------------------
+!
+! ROUTINE
+!   storeInitConcAndDerivatives
+! DESCRIPTION
+! Store initial concentration and first derivatives x time step.
+! Created by: Megan Rose Damon
+!-----------------------------------------------------------------------------
+      subroutine storeInitConcAndDerivatives(num1stOEqnsSolve, ktloop, cnewDerivatives, cnew, currentTimeStep, gloss)
+
+         implicit none
+#     include "smv2chem_par.h"
+
+         integer, intent(in) :: num1stOEqnsSolve
+         integer, intent(in) :: ktloop
+         real*8, intent(out) :: cnewDerivatives(KBLOOP, MXGSAER*7)
+         real*8, intent(in) :: cnew(KBLOOP, MXGSAER)
+         real*8, intent(in) :: currentTimeStep
+         real*8, intent(in) :: gloss(KBLOOP, MXGSAER)
+
+         ! local variables
+         integer :: kloop, jspc, j
+
+         do jspc = 1, num1stOEqnsSolve
+            j = jspc + num1stOEqnsSolve
+
+           do kloop = 1, ktloop
+             cnewDerivatives(kloop,jspc) = cnew(kloop,jspc)
+             cnewDerivatives(kloop,j)    = currentTimeStep * gloss(kloop,jspc)
+           end do
+
+         end do
+      end subroutine storeInitConcAndDerivatives
+
+
+
 
       subroutine initConcentrationArray(ktloop, concentrationsNew, concentrationsOld, managerObject)
 
@@ -1550,7 +1407,7 @@
 !            ncs + ICS => for nighttime gas chemistry
 !   cc2    : array of sparseMatrixDimension units holding values of each matrix
 !            position actually used; originally,
-!            cc2 = P = I - delt * aset(nqq,1) * partial_derivatives;
+!            cc2 = P = I - currentTimeStep * aset(nqq,1) * partial_derivatives;
 !            however, cc2 is decomposed here
 !   vdiag  : 1 / current diagonal term of the decomposed matrix
 !
