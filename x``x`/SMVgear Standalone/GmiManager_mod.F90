@@ -36,11 +36,18 @@ module GmiManager_mod
    public :: initCorrector
    public :: setConvergenceTerms
    public :: sumAccumulatedError
+   public :: updateAfterNonConvTightenLimits
+   public :: updateAfterAccumErrorTestFails
+   public :: resetTermsBeforeStartingOver
+
    public :: REORDER_GRID_CELLS, SOLVE_CHEMISTRY
    public :: EVAL_PREDICTOR, DO_NOT_EVAL_PREDICTOR, PREDICTOR_JUST_CALLED
+   public :: STEP_SUCCESS, STEP_FAILURE
 
    integer, parameter :: REORDER_GRID_CELLS = 1
    integer, parameter :: SOLVE_CHEMISTRY = 2
+   integer, parameter :: STEP_SUCCESS = 1
+   integer, parameter :: STEP_FAILURE = 0
 
    ! MRD: do these belong here?
    integer, parameter :: EVAL_PREDICTOR = 1
@@ -57,7 +64,7 @@ module GmiManager_mod
        ! private
        integer :: numErrTolDecreases
        integer :: numFailOldJacobian ! of times corrector failed to converge while the Jacobian was old
-       integer :: jFail ! of times correcter failed to converge after old "Pderiv" was called
+       integer :: numFailuresAfterVelocity ! of times correcter failed to converge after old "Pderiv" was called
        integer :: numFailErrorTest
        integer :: numFailAfterPredict
        integer :: numCallsPredict ! total # of times predictor is called
@@ -77,30 +84,30 @@ module GmiManager_mod
        real*8  :: iabove
        real*8  :: initialError, initialError_inv
        real*8  :: errmax_ncs_inv
-       real*8  :: xelaps ! elapsed time in chem interval (s)
-       real*8  :: told !stores last value of xelaps in case current step fails
+       real*8  :: elapsedTimeInChemInterval ! elapsed time in chem interval (s)
+       real*8  :: told !stores last value of elapsedTimeInChemInterval in case current step fails
        real*8  :: reltol1, reltol2, reltol3
        real*8  :: rmsError
        integer :: idoub ! records # of steps since the last change in step size or
                ! order; it must be at least kstep = nqq+1 before doubling is
                ! allowed
        integer :: nslp ! last time step # during which "Pderiv" was called
-       integer :: jrestar ! counts # of times Smvgear starts over at order 1 because of
+       integer :: numExcessiveFailures ! counts # of times Smvgear starts over at order 1 because of
                ! excessive failures
 
        integer :: nqqold ! value of nqq during last time step
        integer :: nqq ! order of integration method; varies between 1 and MAXORD
        integer :: kstep ! nqq + 1
-       real*8  :: hratio ! relative change in delt*aset(1) each change in step or order
+       real*8  :: hratio ! relative change in currentTimeStep*aset(1) each change in step or order
                ! when Abs(hratio-1) > MAX_REL_CHANGE, reset jeval = 1 to call Pderiv
        real*8 :: asn1 ! value of aset(nqq,1)
        real*8 :: enqq ! pertst^2*order for current order
        real*8  :: conp1, conp2, conp3
        integer :: nqqisc ! nqq * num1stOEqnsSolve
-       real*8 :: rdelt ! factor (time step ratio) by which delt is increased or decreased
-       real*8 :: rdelmax ! max factor by which delt can be increased in a single step;
+       real*8 :: timeStepRatio ! factor by which currentTimeStep is increased or decreased
+       real*8 :: rdelmax ! max factor by which currentTimeStep can be increased in a single step;
                !                 as in Lsodes, set it to 1d4 initially to compensate for the
-               !                 small initial delt, but then set it to 10 after successful
+               !                 small initial currentTimeStep, but then set it to 10 after successful
                !                 steps and to 2 after unsuccessful steps
        real*8 :: der2max
        real*8  :: drate ! parameter which is used to determine whether convergence
@@ -109,14 +116,105 @@ module GmiManager_mod
        real*8  :: dtlos (KBLOOP, MXGSAER)! an array of length num1stOEqnsSolve, used for the accumulated corrections;
                ! on a successful return; dtlos(kloop,i) contains the estimated one step local error in cnew
       real*8  :: chold (KBLOOP, MXGSAER) ! 1 / (reltol * cnew + abtol); multiply chold by local errors in different error tests
-      real*8  :: rdeltdn ! time step ratio at one order lower  than current order
-      real*8  :: rdeltup ! time step ratio at one order higher than current order
+      real*8  :: timeStepRatioLowerOrder ! time step ratio at one order lower  than current order
+      real*8  :: timeStepRatioHigherOrder ! time step ratio at one order higher than current order
       integer :: ifsuccess ! identifies whether step is successful (=1) or not (=0)
       real*8 :: tolerance (KBLOOP)
       integer :: correctorIterations
+      real*8  :: currentTimeStep
     end type Manager_type
 
 contains
+
+!-----------------------------------------------------------------------------
+!
+! ROUTINE
+!   resetTermsBeforeStartingOver
+! DESCRIPTION
+! iF this fails, reset the order to 1 and go back to the
+! beginning, at order = 1, because errors of the wrong order have accumulated.
+! Created by: Megan Rose Damon
+!-----------------------------------------------------------------------------
+      subroutine resetTermsBeforeStartingOver (this, cnew, cnewDerivatives, &
+                                          & ktloop, lunsmv, pr_smv2)
+
+         implicit none
+         type(manager_type) :: this
+         real*8, intent(out) :: cnew(KBLOOP, MXGSAER)
+         real*8, intent(in) :: cnewDerivatives(KBLOOP, MXGSAER*7)
+         integer, intent(in) :: ktloop
+         integer, intent(in) :: lunsmv
+         logical, intent(in) :: pr_smv2
+
+         integer :: jspc, kloop
+
+         this%currentTimeStep    = this%currentTimeStep * 0.1d0
+         this%timeStepRatio   = 1.0d0
+         this%numFailuresAfterVelocity   = 0
+         this%numExcessiveFailures = this%numExcessiveFailures + 1
+         this%idoub   = 5
+
+         do jspc = 1, this%num1stOEqnsSolve
+           do kloop = 1, ktloop
+             cnew(kloop,jspc) = cnewDerivatives(kloop,jspc)
+           end do
+         end do
+
+         if (pr_smv2) then
+           Write (lunsmv,970) this%currentTimeStep, this%elapsedTimeInChemInterval
+         end if
+
+970      format ('currentTimeStep dec to ', e13.5, ' at time ', e13.5,  &
+         ' because of excessive errors.')
+
+      end subroutine resetTermsBeforeStartingOver
+
+!-----------------------------------------------------------------------------
+!
+! ROUTINE
+!   updateAfterNonConvTightenLimits
+! DESCRIPTION
+! if the Jacobian is current, then reduce the time step,
+! reset the accumulated derivatives to their values before the failed step,
+! and retry with the smaller step.
+! Created by: Megan Rose Damon
+!-----------------------------------------------------------------------------
+   subroutine updateAfterNonConvTightenLimits (this, maxFactorTimeStepIncrease, &
+                              & elapsedTime, timeStepRatio)
+
+      implicit none
+
+      type (Manager_type) :: this
+      real*8, intent(in) :: maxFactorTimeStepIncrease
+      real*8, intent(in) :: elapsedTime
+      real*8, intent(in) :: timeStepRatio
+
+      this%numFailAfterPredict     = this%numFailAfterPredict + 1
+      this%rdelmax   = maxFactorTimeStepIncrease
+      this%ifsuccess = STEP_SUCCESS
+      this%elapsedTimeInChemInterval    = elapsedTime
+      this%timeStepRatio     = timeStepRatio
+
+   end subroutine updateAfterNonConvTightenLimits
+
+!-----------------------------------------------------------------------------
+!
+! ROUTINE
+! The accumulated error test failed.
+! DESCRIPTION
+! Created by: Megan Rose Damon
+!-----------------------------------------------------------------------------
+   subroutine updateAfterAccumErrorTestFails (this)
+
+      implicit none
+
+      type (Manager_type) :: this
+      this%elapsedTimeInChemInterval = this%told
+      this%numFailErrorTest  = this%numFailErrorTest + 1
+      this%numFailuresAfterVelocity  = this%numFailuresAfterVelocity  + 1
+      this%rdelmax = 2.0d0
+
+   end subroutine updateAfterAccumErrorTestFails
 
 !-----------------------------------------------------------------------------
 !
@@ -219,7 +317,7 @@ contains
 
       this%nqqold = 0
       this%nqq    = 1
-      this%rdelt  = 1.0d0
+      this%timeStepRatio  = 1.0d0
 
       evaluatePredictor  = EVAL_PREDICTOR
    end subroutine setInitialOrder
@@ -400,9 +498,9 @@ contains
 ! DESCRIPTION
 ! Created by: Megan Rose Damon
 ! cnewDerivatives   : an array of length num1stOEqnsSolve*(MAXORD+1) that carries the
-!   derivatives of cnew, scaled by delt^j/factorial(j), where j is
+!   derivatives of cnew, scaled by currentTimeStep^j/factorial(j), where j is
 !   the jth derivative; j varies from 1 to nqq; e.g., conc(jspc,2)
-!   stores delt*y' (estimated)
+!   stores currentTimeStep*y' (estimated)
 !-----------------------------------------------------------------------------
    subroutine scaleDerivatives (this, ktloop, cnewDerivatives)
       type (Manager_type) :: this
@@ -416,7 +514,7 @@ contains
       i1     = 1
 
       do j = 2, this%kstep
-         rdelta = rdelta * this%rdelt
+         rdelta = rdelta * this%timeStepRatio
          i1 = i1 + this%num1stOEqnsSolve
           do i = i1, i1 + (this%num1stOEqnsSolve-1)
             do kloop = 1, ktloop
@@ -531,7 +629,7 @@ contains
       !     der2max was calculated during the error tests earlier.
       rdeltsm = 1.0d0 / ((this%conp2 * this%der2max**enqq2(this%nqq)) + 1.2d-6)
 
-      !     Estimate the time step ratio (rdeltdn) at one order lower than
+      !     Estimate the time step ratio (timeStepRatioLowerOrder) at one order lower than
       !     the current order.  if nqq = 1, then we cannot test a lower order
       if (this%nqq > 1) then
 
@@ -557,14 +655,14 @@ contains
           end if
         end do
 
-        this%rdeltdn = 1.0d0 / ((this%conp1 * der1max**enqq1(this%nqq)) + 1.3d-6)
+        this%timeStepRatioLowerOrder = 1.0d0 / ((this%conp1 * der1max**enqq1(this%nqq)) + 1.3d-6)
 
       else
-        this%rdeltdn = 0.0d0
+        this%timeStepRatioLowerOrder = 0.0d0
       end if
 
       !     Find the largest of the predicted time step ratios of each order.
-      this%rdelt = Max (this%rdeltup, rdeltsm, this%rdeltdn)
+      this%timeStepRatio = Max (this%timeStepRatioHigherOrder, rdeltsm, this%timeStepRatioLowerOrder)
 
 
    end subroutine estimateTimeStepRatio
@@ -666,10 +764,9 @@ contains
 !   pr_smv2  : should the SmvgearII     output file be written
 !   lunsmv   : logical unit number to write to when pr_smv2 is true
 !   ncs      : identifies gas chemistry type (1..NCSGAS)
-!   delt      : current time step (s)
 ! WARNING: this routine may not have been adequately tested
 !-----------------------------------------------------------------------------
-   subroutine tightenErrorTolerance (this, pr_smv2, lunsmv, ncs, delt)
+   subroutine tightenErrorTolerance (this, pr_smv2, lunsmv, ncs)
 
       use GmiPrintError_mod, only : GmiPrintError
 
@@ -681,13 +778,12 @@ contains
       logical, intent(in)  :: pr_smv2
       integer, intent(in)  :: lunsmv
       integer, intent(in)  :: ncs ! ncs is argument to Smvgear
-      real*8, intent(inout) :: delt
 
       if (pr_smv2) then
-         Write (lunsmv,950) delt, this%timeremain, this%failureFraction, relativeErrorTolerance(ncs)
+         Write (lunsmv,950) this%currentTimeStep, this%timeremain, this%failureFraction, relativeErrorTolerance(ncs)
       end if
 
-      950    format ('Smvgear:  delt      = ', 1pe9.3, /,  '          timremain = ', 1pe9.3, /,  &
+      950    format ('Smvgear:  currentTimeStep      = ', 1pe9.3, /,  '          timremain = ', 1pe9.3, /,  &
          &          '          failureFraction      = ', 1pe9.3, /,  '          errmax    = ', 1pe9.3)
 
       this%numErrTolDecreases = this%numErrTolDecreases + 1
@@ -710,33 +806,31 @@ contains
 ! ROUTINE
 !   calculateTimeStep
 ! DESCRIPTION
-!     Limit size of rdelt, then recalculate new time step and update
+!     Limit size of timeStepRatio, then recalculate new time step and update
 !     hratio.  Use hratio to determine whether or not the predictor
 !     should be updated. (edit by MRD on 2/27/2013)
 ! Created by: Megan Rose Damon
-!     delt      : current time step (s)
 ! Unit testing ideas: can't take a step bigger than what we have remaining
 ! Make this a method on a class?
 ! two routines: update time step and determine Jacobian (something like this)
 !-----------------------------------------------------------------------------
-   subroutine calculateTimeStep (this, delt, jeval, maxRelChange)
+   subroutine calculateTimeStep (this, jeval, maxRelChange)
 
       ! ----------------------
       ! Argument declarations.
       ! ----------------------
       type (Manager_type) :: this
-      real*8, intent(inout) :: delt
       integer, intent(out) :: jeval
       real*8, intent(in) :: maxRelChange
 
       real*8  :: hmtim
 
       hmtim  = Min (this%maxTimeStep, this%timeremain)
-      this%rdelt  = Min (this%rdelt, this%rdelmax, hmtim/delt)
-      delt   = delt   * this%rdelt
+      this%timeStepRatio  = Min (this%timeStepRatio, this%rdelmax, hmtim/this%currentTimeStep)
+      this%currentTimeStep   = this%currentTimeStep   * this%timeStepRatio
 
-      this%hratio = this%hratio * this%rdelt
-      this%xelaps = this%xelaps + delt
+      this%hratio = this%hratio * this%timeStepRatio
+      this%elapsedTimeInChemInterval = this%elapsedTimeInChemInterval + this%currentTimeStep
       ! rename nslp
       if ((Abs (this%hratio-1.0d0) > maxRelChange) .or. (this%numSuccessTdt >= this%nslp)) then
         jeval = 1 ! MRD: could be a boolean; this is signifying to whether or not to update Jacobian
@@ -796,10 +890,9 @@ contains
 ! Created by: Megan Rose Damon
 !   ktloop   : # of grid-cells in a grid-block
 !   dely     : TBD
-!   delt      : current time step (s)
 !   ncs      : identifies gas chemistry type (1..NCSGAS)
 !-----------------------------------------------------------------------------
-   subroutine calcInitialTimeStepSize (this, ktloop, dely, delt, ncs)
+   subroutine calcInitialTimeStepSize (this, ktloop, dely, ncs)
 
       ! ----------------------
       ! Argument declarations.
@@ -807,7 +900,6 @@ contains
       type (Manager_type) :: this
       integer, intent(in)  :: ktloop
       real*8, intent(in)  :: dely  (KBLOOP)
-      real*8, intent(out)    :: delt
       integer, intent(in)  :: ncs ! ncs is argument to Smvgear
 
       integer :: kloop
@@ -820,7 +912,7 @@ contains
       end do
 
       delt1 = Sqrt (this%initialError / (abst2(ncs) + (rmstop * this%order_inv)))
-      delt  = Max  (Min (delt1, this%timeremain, this%maxTimeStep), HMIN)
+      this%currentTimeStep  = Max  (Min (delt1, this%timeremain, this%maxTimeStep), HMIN)
 
    end subroutine calcInitialTimeStepSize
 
@@ -884,8 +976,8 @@ contains
 
       this%idoub     = 2
       this%nslp      = MBETWEEN
-      this%jrestar   = 0
-      this%xelaps    = 0.0d0
+      this%numExcessiveFailures   = 0
+      this%elapsedTimeInChemInterval    = 0.0d0
       this%told      = 0.0d0
       this%timeremain = this%chemTimeInterval
 
@@ -926,7 +1018,7 @@ contains
          real*8,  intent(in)  :: hmaxnit
 
          this%numFailOldJacobian     = 0
-         this%jFail     = 0
+         this%numFailuresAfterVelocity     = 0
          this%numFailErrorTest     = 0
          this%numFailAfterPredict     = 0
          this%numCallsPredict   = 0

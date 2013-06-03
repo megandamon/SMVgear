@@ -112,7 +112,7 @@
 !   nfdrep   : nfdh3 + # of rxns with two active reactants that are not
 !              followed by a rxn with the same reactants
 !   nfdrep1  : nfdrep + 1 ! MRD: No longer needed. Remove it.
-!   fracdec  : fraction time step is decreased in Smvgear if convergence
+!   timeStepDecreaseFraction  : fraction time step is decreased in Smvgear if convergence
 !              test fails
 !   hmaxnit  : max time step for night all chem (s)
 !   pr_nc_period     : NetCDF output period
@@ -146,7 +146,7 @@
      &  (do_qqjk_inchem, do_semiss_inchem, pr_qqjk, pr_smv2, ifsun,  &
      &   ilat, ilong, ivert, ireord, itloop, jlooplo, ktloop, lunsmv,  &
      &   numActiveReactants, ncs, nfdh2, nfdh3, nfdl1, nfdl2, nfdrep, nfdrep1,  &
-     &   fracdec, hmaxnit, pr_nc_period, tdt, do_cell_chem, irma, irmb,  &
+     &   timeStepDecreaseFraction, hmaxnit, pr_nc_period, tdt, do_cell_chem, irma, irmb,  &
      &   irmc, jreorder, jphotrat, ntspec, inewold, denair, corig,  &
      &   pratk1, yemis, smvdm, nfdh1, errmx2, cc2, cnew, gloss, vdiag,  &
      &   rrate, &
@@ -192,7 +192,7 @@
       integer, intent(in)  :: nfdh2,  nfdh3
       integer, intent(in)  :: nfdl1,  nfdl2
       integer, intent(in)  :: nfdrep, nfdrep1
-      real*8,  intent(in)  :: fracdec
+      real*8,  intent(in)  :: timeStepDecreaseFraction
       real*8,  intent(in)  :: hmaxnit
       real*8,  intent(in)  :: pr_nc_period
       real*8,  intent(in)  :: tdt
@@ -256,7 +256,6 @@
 
       real*8  :: cnw
       real*8  :: consmult
-      real*8  :: currentTimeStep
       real*8  :: dtasn1
       real*8  :: der1max, der3max
       real*8  :: errymax
@@ -299,6 +298,8 @@
 
       call resetGear (managerObject, ncsp, ncs, ifsun, hmaxnit)
 
+
+
  100  continue
 !     ----------------------------------------------------
 !     Start time interval or re-enter after total failure.
@@ -338,22 +339,21 @@
          return
       end if
 
-      call calcInitialTimeStepSize (managerObject, ktloop, dely, currentTimeStep, ncs)
+      call calcInitialTimeStepSize (managerObject, ktloop, dely, ncs)
       call setInitialOrder (managerObject, evaluatePredictor)
-      call storeInitConcAndDerivatives(managerObject%num1stOEqnsSolve, ktloop, cnewDerivatives, cnew, currentTimeStep, gloss)
-
-
+      call storeInitConcAndDerivatives(managerObject%num1stOEqnsSolve, ktloop, &
+                           & cnewDerivatives, cnew, managerObject%currentTimeStep, gloss)
  200  continue
 
       if (managerObject%nqq /= managerObject%nqqold) call updateCoefficients (managerObject)
 
-      call calculateTimeStep (managerObject, currentTimeStep, evaluatePredictor, MAX_REL_CHANGE)
-      if (currentTimeStep < HMIN) then
-        call tightenErrorTolerance (managerObject, pr_smv2, lunsmv, ncs, currentTimeStep)
+      call calculateTimeStep (managerObject, evaluatePredictor, MAX_REL_CHANGE)
+      if (managerObject%currentTimeStep < HMIN) then
+        call tightenErrorTolerance (managerObject, pr_smv2, lunsmv, ncs)
         go to 100
       end if
 
-      if (managerObject%rdelt /= 1.0d0) then
+      if (managerObject%timeStepRatio /= 1.0d0) then
          call scaleDerivatives (managerObject, ktloop, cnewDerivatives)
       end if
 
@@ -378,7 +378,7 @@
       ! Re-evaluate predictor matrix before starting the corrector iteration.
       if (evaluatePredictor == EVAL_PREDICTOR) then
 
-         r1delt = -managerObject%asn1 * currentTimeStep
+         r1delt = -managerObject%asn1 * managerObject%currentTimeStep
          nondiag  = sparseMatrixDimension(ncsp) - managerObject%num1stOEqnsSolve
 
          call calculatePredictor (nondiag, sparseMatrixDimension(ncsp), &
@@ -408,7 +408,7 @@
                & ilong, ntspec, ncs, inewold, do_semiss_inchem, gloss, yemis)
 
       call computeErrorFromCorrected1stDeriv (managerObject%num1stOEqnsSolve, ktloop, &
-               gloss, currentTimeStep, cnewDerivatives, managerObject%dtlos)
+               gloss, managerObject%currentTimeStep, cnewDerivatives, managerObject%dtlos)
 
       call Backsub (managerObject%num1stOEqnsSolve, ktloop, ncsp, cc2, vdiag, gloss)
 
@@ -421,7 +421,7 @@
 ! MRD: the comments below may be misleading.
 
 
-      if (managerObject%dcon > 1.0d0) then ! non-convergence
+      if (managerObject%dcon > 1.0d0) then ! NON-CONVERGENCE
 
         ! If nonconvergence after one step, re-evaluate first derivative with new values of cnew.
         if (managerObject%correctorIterations == 1) then
@@ -443,16 +443,9 @@
          ! if the Jacobian is current, then reduce the time step,
          ! reset the accumulated derivatives to their values before the failed step,
          ! and retry with the smaller step.
-
-
-        managerObject%numFailAfterPredict     = managerObject%numFailAfterPredict + 1
-        managerObject%rdelmax   = 2.0d0
-        managerObject%ifsuccess = 0
-        managerObject%xelaps    = managerObject%told
-        managerObject%rdelt     = fracdec
-
-        evaluatePredictor     = EVAL_PREDICTOR
-        call resetCnewDerivatives(managerObject, cnewDerivatives, ktloop)
+         evaluatePredictor     = EVAL_PREDICTOR
+         call updateAfterNonConvTightenLimits (managerObject, 2.0d0, managerObject%told, timeStepDecreaseFraction)
+         call resetCnewDerivatives(managerObject, cnewDerivatives, ktloop)
 
         go to 200 ! tighten limit, then re-evaluate the predictor, then call velocity
 
@@ -460,22 +453,13 @@
 
 
 
-!     -------------------------------------------------------------------
-!     The corrector iteration converged.
-!
-!     Set evaluatePredictor, so that it does not need to be called the next step.
-!     If all else goes well.
-!     -------------------------------------------------------------------
-!     If convergence occurs, go on to check accumulated error?
-
+      ! The corrector iteration CONVERGED.
       evaluatePredictor = DO_NOT_EVAL_PREDICTOR
       if (managerObject%correctorIterations > 1) then
          call testAccumulatedError (managerObject, ktloop, dely)
       end if
 
 
-          ! routine start accumulatedErrorTestFailed
-!     -------------------------------------------------------------------
 
 !     ----------------------------------------------------------------
 !     The accumulated error test failed.
@@ -484,69 +468,43 @@
 !     last time step.  Next:
 !       (a) re-estimate a time step at the same or one lower order and
 !           retry the step;
-!       (b) if the first attempts fail, retry the step at fracdec the
+!       (b) if the first attempts fail, retry the step at timeStepDecreaseFraction the
 !           the prior step;
-!       (c) iF this fails, reset the order to 1 and go back to the
-!           beginning, at order = 1, because errors of the wrong order
-!           have accumulated.
-!     ----------------------------------------------------------------
+
 
 !     ==============================
       DER2MAXIF: if (managerObject%der2max > managerObject%enqq) then
 !     ==============================
-        if (prDiag) Write(*,*) "der2max > enqq"
-        managerObject%xelaps = managerObject%told
-        managerObject%numFailErrorTest  = managerObject%numFailErrorTest + 1
-        managerObject%jFail  = managerObject%jFail  + 1
 
-        call resetCnewDerivatives(managerObject, cnewDerivatives, ktloop)
-
-        managerObject%rdelmax = 2.0d0
+        call updateAfterAccumErrorTestFails (managerObject)
+        call resetCnewDerivatives (managerObject, cnewDerivatives, ktloop)
 
         ! MRD: magic numbers
-        ! enums
-        ! prefer strings to integers
-        if (managerObject%jFail <= 6) then
+        if (managerObject%numFailuresAfterVelocity <= 6) then
 
           managerObject%ifsuccess = 0
-          managerObject%rdeltup   = 0.0d0
-          if (prDiag) Write(*,*) "managerObject%jFail <= 6"
+          managerObject%timeStepRatioHigherOrder   = 0.0d0
 
-!         =========
           go to 400
-!         =========
 
-        else if (managerObject%jFail <= 20) then
-         if (prDiag) Write(*,*) "managerObject%jFail <= 20"
+
+        else if (managerObject%numFailuresAfterVelocity <= 20) then
+
           managerObject%ifsuccess = 0
-          managerObject%rdelt     = fracdec
+          managerObject%timeStepRatio     = timeStepDecreaseFraction
 
-!         =========
           go to 200
-!         =========
 
+!       (c) iF this fails, reset the order to 1 and go back to the
+!           beginning, at order = 1, because errors of the wrong order
+!           have accumulated.
         else
 
-          currentTimeStep    = currentTimeStep * 0.1d0
-          managerObject%rdelt   = 1.0d0
-          managerObject%jFail   = 0
-          managerObject%jrestar = managerObject%jrestar + 1
-          managerObject%idoub   = 5
+          call resetTermsBeforeStartingOver (managerObject, cnew, cnewDerivatives, &
+                                          & ktloop, lunsmv, pr_smv2)
 
-          do jspc = 1, managerObject%num1stOEqnsSolve
-            do kloop = 1, ktloop
-              cnew(kloop,jspc) = cnewDerivatives(kloop,jspc)
-            end do
-          end do
 
-          if (pr_smv2) then
-            Write (lunsmv,970) currentTimeStep, managerObject%xelaps
-          end if
-
- 970      format ('delt dec to ', e13.5, ' at time ', e13.5,  &
-     &            ' because of excessive errors.')
-
-          if (managerObject%jrestar == 100) then
+          if (managerObject%numExcessiveFailures == 100) then
 
             if (pr_smv2) then
               Write (lunsmv,980)
@@ -577,7 +535,7 @@
 
 
         if (pr_qqjk .and. do_qqjk_inchem) then
-          xtimestep = managerObject%xelaps - managerObject%told
+          xtimestep = managerObject%elapsedTimeInChemInterval - managerObject%told
 
 !         =================
           call Do_Smv2_Diag  &
@@ -591,10 +549,10 @@
         end if
 
 
-        managerObject%jFail     = 0
+        managerObject%numFailuresAfterVelocity     = 0
         managerObject%ifsuccess = 1
         managerObject%numSuccessTdt    = managerObject%numSuccessTdt + 1
-        managerObject%told      = managerObject%xelaps
+        managerObject%told      = managerObject%elapsedTimeInChemInterval
 
         call updateDerivatives(managerObject, cnewDerivatives, ktloop)
 
@@ -627,18 +585,12 @@
 
         end if
 
-         print*, "after update"
-         print*, ktloop
-         print*, managerObject%num1stOEqnsSolve
-         print*, sum(cnewDerivatives), sum(explic), sum(smvdm)
-         print*, sum(managerObject%dtlos), managerObject%asn1, prDiag
-
 
 !       ---------------------------------------------------
 !       Exit smvgear if a time interval has been completed.
 !       ---------------------------------------------------
 
-        managerObject%timeremain = managerObject%chemTimeInterval - managerObject%xelaps
+        managerObject%timeremain = managerObject%chemTimeInterval - managerObject%elapsedTimeInChemInterval
         if (prDiag) Write(*,*) "checking time interval"
 
         if (managerObject%timeremain <= 1.0d-06) return
@@ -676,7 +628,7 @@
 
           end if
 
-          managerObject%rdelt = 1.0d0
+          managerObject%timeStepRatio = 1.0d0
          if (prDiag) Write(*,*) "Going to 200"
 
 !         =========
@@ -694,6 +646,12 @@
 !     ================
 
 
+
+
+
+
+
+
 !     ------------------------------------------------------------------
 !     Test whether to change the step-size and order.
 !
@@ -707,7 +665,7 @@
 !     ------------------------------------------------------------------
 
 !     ---------------------------------------------------------------
-!     Estimate the time step ratio (rdeltup) at one order higher than
+!     Estimate the time step ratio (timeStepRatioHigherOrder) at one order higher than
 !     the current order.  If nqq >= MAXORD, then we do not allow the
 !     order to increase.
 !     ---------------------------------------------------------------
@@ -739,12 +697,12 @@
 
         end do
 
-        managerObject%rdeltup = 1.0d0 / ((managerObject%conp3 * der3max**enqq3(managerObject%nqq)) + 1.4d-6)
+        managerObject%timeStepRatioHigherOrder = 1.0d0 / ((managerObject%conp3 * der3max**enqq3(managerObject%nqq)) + 1.4d-6)
 
 
       else
 
-        managerObject%rdeltup = 0.0d0
+        managerObject%timeStepRatioHigherOrder = 0.0d0
 
       end if
 
@@ -757,12 +715,12 @@
       call estimateTimeStepRatio (managerObject, ktloop, dely, cnewDerivatives)
 
 !     ---------------------------------------------------------------
-!     If the last step was successful and rdelt is small, keep the
+!     If the last step was successful and timeStepRatio is small, keep the
 !     current step and order, and allow three successful steps before
 !     re-checking the time step and order.
 !     ---------------------------------------------------------------
 
-      if ((managerObject%rdelt < 1.1d0) .and. (managerObject%ifsuccess == 1)) then
+      if ((managerObject%timeStepRatio < 1.1d0) .and. (managerObject%ifsuccess == 1)) then
 
         managerObject%idoub = 3
 
@@ -772,11 +730,11 @@
 
 !       --------------------------------------------------------------
 !       If the maximum time step ratio is that of one order lower than
-!       the current order, decrease the order.  Do not minimize rdelt
+!       the current order, decrease the order.  Do not minimize timeStepRatio
 !       to <= 1, when ifsuccess = 0 since this is less efficient.
 !       --------------------------------------------------------------
 
-      else if (managerObject%rdelt == managerObject%rdeltdn) then
+      else if (managerObject%timeStepRatio == managerObject%timeStepRatioLowerOrder) then
 
 
         managerObject%nqq = managerObject%nqq - 1
@@ -788,7 +746,7 @@
 !       ---------------------------------------------------------------
 
 
-      else if (managerObject%rdelt == managerObject%rdeltup) then
+      else if (managerObject%timeStepRatio == managerObject%timeStepRatioHigherOrder) then
 
 ! routine start increareOrderAddDerTerm
 !     -------------------------------------------------------------------
@@ -818,7 +776,7 @@
 
 !     ----------------------------------------------------------------
 !     If the last two steps have failed, re-set idoub to the current
-!     order + 1.  Do not minimize rdelt if managerObject%jFail >= 2 since tests show
+!     order + 1.  Do not minimize timeStepRatio if managerObject%numFailuresAfterVelocity >= 2 since tests show
 !     that this merely leads to additional computations.
 !     ----------------------------------------------------------------
 
@@ -831,6 +789,8 @@
       return
 
       end subroutine Smvgear
+
+
 
 
 
