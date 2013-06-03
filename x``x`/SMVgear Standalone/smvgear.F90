@@ -126,7 +126,7 @@
 !              occurs (molec/cm^3)
 !   pratk1   : tbd
 !   yemis    : surface emissions (units?)
-!   smvdm    : amount added to each spc at each grid-cell, for mass balance
+!   amountAddedToEachSpecies    : amount added to each spc at each grid-cell, for mass balance
 !              accounting (# cm^-3 for gas chemistry (?))
 !   nfdh1    : nfdh2 + # of rxns with one   active reactant
 !   errmx2   : measure of stiffness/nearness to convergence of each block
@@ -148,7 +148,7 @@
      &   numActiveReactants, ncs, nfdh2, nfdh3, nfdl1, nfdl2, nfdrep, nfdrep1,  &
      &   timeStepDecreaseFraction, hmaxnit, pr_nc_period, tdt, do_cell_chem, irma, irmb,  &
      &   irmc, jreorder, jphotrat, ntspec, inewold, denair, corig,  &
-     &   pratk1, yemis, smvdm, nfdh1, errmx2, cc2, cnew, gloss, vdiag,  &
+     &   pratk1, yemis, amountAddedToEachSpecies, nfdh1, errmx2, cc2, cnew, gloss, vdiag,  &
      &   rrate, &
      &   yda, qqkda, qqjda, qkgmi, qjgmi, &
      &   CTMi1, CTMi2, CTMju1, CTMj2, CTMk1, CTMk2, &
@@ -216,7 +216,7 @@
       real*8,  intent(inout) :: cc2   (KBLOOP, 0:MXARRAY)
       real*8,  intent(inout) :: cnew  (KBLOOP, MXGSAER)
       real*8,  intent(inout) :: gloss (KBLOOP, MXGSAER)
-      real*8,  intent(inout) :: smvdm (KBLOOP, MXGSAER)
+      real*8,  intent(inout) :: amountAddedToEachSpecies (KBLOOP, MXGSAER)
       real*8,  intent(inout) :: vdiag (KBLOOP, MXGSAER)
       real*8,  intent(inout) :: rrate (KBLOOP, NMTRATE)
 
@@ -250,7 +250,7 @@
       integer :: concAboveAbtolCount(KBLOOP, 5)
 
 !     ------------------------------------------------------------------------
-!     MAX_REL_CHANGE     : max relative change in currentTimeStep*aset(1) before Pderiv is called
+!     MAX_REL_CHANGE     : max relative change in currentTimeStep*coeffsForIntegrationOrder(1) before Pderiv is called
 !     order     : floating point value of num1stOEqnsSolve, the order of # of ODEs
 !     ------------------------------------------------------------------------
 
@@ -273,11 +273,11 @@
 !     -------------------------------------------------------------------------
 !     dely   : tbd
 !     yabst  : absolute error tolerance (molec/cm^-3 for gases)!
-!     cest   : stores value of dtlos when idoub = 1
+!     cest   : stores value of accumulatedError when idoub = 1
 !     explic : tbd
 !     cnewDerivatives   : an array of length num1stOEqnsSolve*(MAXORD+1) that carries the
 !              derivatives of cnew, scaled by currentTimeStep^j/factorial(j), where j is
-!              the jth derivative; j varies from 1 to nqq; e.g., cnewDerivatives(jspc,2)
+!              the jth derivative; j varies from 1 to orderOfIntegrationMethod; e.g., cnewDerivatives(jspc,2)
 !              stores currentTimeStep*y' (estimated)
 !     -------------------------------------------------------------------------
 
@@ -345,7 +345,7 @@
                            & cnewDerivatives, cnew, managerObject%currentTimeStep, gloss)
  200  continue
 
-      if (managerObject%nqq /= managerObject%nqqold) call updateCoefficients (managerObject)
+      if (managerObject%orderOfIntegrationMethod /= managerObject%oldOrderOfIntegrationMethod) call updateCoefficients (managerObject)
 
       call calculateTimeStep (managerObject, evaluatePredictor, MAX_REL_CHANGE)
       if (managerObject%currentTimeStep < HMIN) then
@@ -378,7 +378,7 @@
       ! Re-evaluate predictor matrix before starting the corrector iteration.
       if (evaluatePredictor == EVAL_PREDICTOR) then
 
-         r1delt = -managerObject%asn1 * managerObject%currentTimeStep
+         r1delt = -managerObject%integrationOrderCoeff1 * managerObject%currentTimeStep
          nondiag  = sparseMatrixDimension(ncsp) - managerObject%num1stOEqnsSolve
 
          call calculatePredictor (nondiag, sparseMatrixDimension(ncsp), &
@@ -408,7 +408,7 @@
                & ilong, ntspec, ncs, inewold, do_semiss_inchem, gloss, yemis)
 
       call computeErrorFromCorrected1stDeriv (managerObject%num1stOEqnsSolve, ktloop, &
-               gloss, managerObject%currentTimeStep, cnewDerivatives, managerObject%dtlos)
+               gloss, managerObject%currentTimeStep, cnewDerivatives, managerObject%accumulatedError)
 
       call Backsub (managerObject%num1stOEqnsSolve, ktloop, ncsp, cc2, vdiag, gloss)
 
@@ -460,79 +460,51 @@
       end if
 
 
+      ! The accumulated error test failed.
+      if (managerObject%der2max > managerObject%enqq) then
 
-!     ----------------------------------------------------------------
-!     The accumulated error test failed.
-!
-!     In all cases, reset the derivatives to their values before the
-!     last time step.  Next:
-!       (a) re-estimate a time step at the same or one lower order and
-!           retry the step;
-!       (b) if the first attempts fail, retry the step at timeStepDecreaseFraction the
-!           the prior step;
+         ! In all cases, reset the derivatives to their values before the last time step.
+         call updateAfterAccumErrorTestFails (managerObject)
+         call resetCnewDerivatives (managerObject, cnewDerivatives, ktloop)
 
+         ! MRD: magic numbers
+         ! re-estimate a time step at the same or one lower order and retry the step;
+         if (managerObject%numFailuresAfterVelocity <= 6) then
 
-!     ==============================
-      DER2MAXIF: if (managerObject%der2max > managerObject%enqq) then
-!     ==============================
+            managerObject%ifsuccess = 0
+            managerObject%timeStepRatioHigherOrder   = 0.0d0
 
-        call updateAfterAccumErrorTestFails (managerObject)
-        call resetCnewDerivatives (managerObject, cnewDerivatives, ktloop)
+            go to 400
 
-        ! MRD: magic numbers
-        if (managerObject%numFailuresAfterVelocity <= 6) then
+         ! if the first attempts fail, retry the step at timeStepDecreaseFraction
 
-          managerObject%ifsuccess = 0
-          managerObject%timeStepRatioHigherOrder   = 0.0d0
+         else if (managerObject%numFailuresAfterVelocity <= 20) then
 
-          go to 400
+            managerObject%ifsuccess = 0
+            managerObject%timeStepRatio     = timeStepDecreaseFraction
+
+            go to 200
 
 
-        else if (managerObject%numFailuresAfterVelocity <= 20) then
+         else
 
-          managerObject%ifsuccess = 0
-          managerObject%timeStepRatio     = timeStepDecreaseFraction
-
-          go to 200
-
-!       (c) iF this fails, reset the order to 1 and go back to the
-!           beginning, at order = 1, because errors of the wrong order
-!           have accumulated.
-        else
-
-          call resetTermsBeforeStartingOver (managerObject, cnew, cnewDerivatives, &
+            call resetTermsBeforeStartingOver (managerObject, cnew, cnewDerivatives, &
                                           & ktloop, lunsmv, pr_smv2)
 
-
-          if (managerObject%numExcessiveFailures == 100) then
-
-            if (pr_smv2) then
-              Write (lunsmv,980)
+            if (managerObject%numExcessiveFailures == LIMIT_EXCESSIVE_FAILURES) then
+               if (pr_smv2) Write(*,*) "Smvgear:  Stopping because of excessive errors."
+               call GmiPrintError ('Problem in Smvgear', .true., 0, 0, 0, 0, 0.0d0, 0.0d0)
             end if
 
- 980        format ('Smvgear:  Stopping because of excessive errors.')
+            go to 150
 
-            call GmiPrintError ('Problem in Smvgear', .true., 0, 0, 0, 0, 0.0d0, 0.0d0)
+         end if
 
-          end if
-
-!         =========
-          go to 150
-!         =========
-
-        end if
-
-!     ====
+      ! The accumulated error test did not fail
       else
-!     ====
 
-!       -------------------------------------------------------------
-!       All successful steps come through here.
-!
 !       After a successful step, update the concentration and all
 !       derivatives, reset told, set ifsuccess = 1, increment numSuccessTdt,
-      if (prDiag) Write(*,*) "successful stepping"
-
 
         if (pr_qqjk .and. do_qqjk_inchem) then
           xtimestep = managerObject%elapsedTimeInChemInterval - managerObject%told
@@ -548,102 +520,24 @@
      &       num_qjo, num_qks, num_qjs, num_active)
         end if
 
+         call updateAndResetAfterSucessfulStep (managerObject, cnewDerivatives, ktloop)
+         call doMassBalanceAccounting (managerObject%integrationOrderCoeff1, managerObject%num1stOEqnsSolve, ktloop, &
+                                       amountAddedToEachSpecies, managerObject%accumulatedError, explic, cnewDerivatives)
 
-        managerObject%numFailuresAfterVelocity     = 0
-        managerObject%ifsuccess = 1
-        managerObject%numSuccessTdt    = managerObject%numSuccessTdt + 1
-        managerObject%told      = managerObject%elapsedTimeInChemInterval
-
-        call updateDerivatives(managerObject, cnewDerivatives, ktloop)
-
-         print*, ktloop
-         print*, managerObject%num1stOEqnsSolve
-         print*, sum(cnewDerivatives), sum(explic), sum(smvdm)
-         print*, sum(managerObject%dtlos), managerObject%asn1, prDiag
-
-         ! TODO: Megan FIX this routine. Does not give 0 diff
-        !call updateChemistryMassBalance (ktloop, cnewDerivatives, explic, smvdm, &
-         !& prDiag, managerObject)
-
-       if (managerObject%asn1 == 1.0d0) then
-          do i = 1, managerObject%num1stOEqnsSolve
-            do kloop = 1, ktloop
-              smvdm(kloop,i) = smvdm(kloop,i) + managerObject%dtlos(kloop,i) + explic(kloop,i)
-              cnewDerivatives(kloop,i) = cnewDerivatives(kloop,i) + managerObject%dtlos(kloop,i)
-            end do
-          end do
-
-        else
-
-          do i = 1, managerObject%num1stOEqnsSolve
-            do kloop = 1, ktloop
-              dtasn1         = managerObject%asn1 * managerObject%dtlos(kloop,i)
-              smvdm(kloop,i) = smvdm(kloop,i) + dtasn1 + explic(kloop,i)
-              cnewDerivatives (kloop,i) = cnewDerivatives (kloop,i) + dtasn1
-            end do
-          end do
-
-        end if
-
-
-!       ---------------------------------------------------
 !       Exit smvgear if a time interval has been completed.
-!       ---------------------------------------------------
+        managerObject%timeRemainingInChemInterval = managerObject%chemTimeInterval - managerObject%elapsedTimeInChemInterval
+        if (managerObject%timeRemainingInChemInterval <= 1.0d-06) return
 
-        managerObject%timeremain = managerObject%chemTimeInterval - managerObject%elapsedTimeInChemInterval
-        if (prDiag) Write(*,*) "checking time interval"
-
-        if (managerObject%timeremain <= 1.0d-06) return
-
-!       -------------------------------------------------------------------
 !       idoub counts the number of successful steps before re-testing the
-!       step-size and order:
-!         if idoub > 1, decrease idoub and go on to the next time step with
-!                       the current step-size and order;
-!         if idoub = 1, store the value of the error (dtlos) for the time
-!                       step prediction, which will occur when idoub = 0,
-!                       but go on to the next step with the current step
-!                       size and order;
-!         if idoub = 0, test the time step and order for a change.
-!       -------------------------------------------------------------------
-! routine start goToNextTimeStep
-!     -------------------------------------------------------------------
-!       ------------------------------
+!       step-size and order: if idoub > 1, decrease idoub and go on to the next time step with
+!       the current step-size and order;
         if (managerObject%idoub > 1) then
-
-          managerObject%idoub = managerObject%idoub - 1
-
-          if (managerObject%idoub == 1) then
-
-            do jspc = 1, managerObject%num1stOEqnsSolve, 2
-
-              jg1 = jspc + 1
-
-              do kloop = 1, ktloop
-                cest(kloop,jspc) = managerObject%dtlos(kloop,jspc)
-                cest(kloop,jg1)  = managerObject%dtlos(kloop,jg1)
-              end do
-
-            end do
-
-          end if
-
-          managerObject%timeStepRatio = 1.0d0
-         if (prDiag) Write(*,*) "Going to 200"
-
-!         =========
+          call storeAccumErrorAndSetTimeStepRatio(managerObject, cest, ktloop)
           go to 200
-!         =========
-
         end if
 
-        ! routine end goToNextTimeStep
-!     -------------------------------------------------------------------
-!       ------------------------------
+      end if
 
-!     ================
-      end if DER2MAXIF
-!     ================
 
 
 
@@ -666,14 +560,14 @@
 
 !     ---------------------------------------------------------------
 !     Estimate the time step ratio (timeStepRatioHigherOrder) at one order higher than
-!     the current order.  If nqq >= MAXORD, then we do not allow the
+!     the current order.  If orderOfIntegrationMethod >= MAXORD, then we do not allow the
 !     order to increase.
 !     ---------------------------------------------------------------
         ! routine start changeStepSizeAndOrderTest
 !     -------------------------------------------------------------------
    if (prDiag) Write(*,*) "testing whether or not to change time order"
 
-      if (managerObject%nqq < MAXORD) then
+      if (managerObject%orderOfIntegrationMethod < MAXORD) then
 
         do kloop = 1, ktloop
           dely(kloop) = 0.0d0
@@ -681,7 +575,7 @@
 
         do jspc = 1, managerObject%num1stOEqnsSolve
           do kloop = 1, ktloop
-            errymax     = (managerObject%dtlos(kloop,jspc) - cest(kloop,jspc)) *  &
+            errymax     = (managerObject%accumulatedError(kloop,jspc) - cest(kloop,jspc)) *  &
      &                    managerObject%chold(kloop,jspc)
             dely(kloop) = dely(kloop) + (errymax * errymax)
           end do
@@ -697,7 +591,7 @@
 
         end do
 
-        managerObject%timeStepRatioHigherOrder = 1.0d0 / ((managerObject%conp3 * der3max**enqq3(managerObject%nqq)) + 1.4d-6)
+        managerObject%timeStepRatioHigherOrder = 1.0d0 / ((managerObject%conp3 * der3max**enqq3(managerObject%orderOfIntegrationMethod)) + 1.4d-6)
 
 
       else
@@ -737,7 +631,7 @@
       else if (managerObject%timeStepRatio == managerObject%timeStepRatioLowerOrder) then
 
 
-        managerObject%nqq = managerObject%nqq - 1
+        managerObject%orderOfIntegrationMethod = managerObject%orderOfIntegrationMethod - 1
 
 !       ---------------------------------------------------------------
 !       If the maximum time step ratio is that of one order higher than
@@ -752,9 +646,9 @@
 !     -------------------------------------------------------------------
 
         real_kstep = managerObject%kstep
-        consmult   = coeffsForIntegrationOrder(managerObject%nqq,managerObject%kstep) / real_kstep
-        managerObject%nqq        = managerObject%kstep
-        nqisc      = managerObject%nqq * managerObject%num1stOEqnsSolve
+        consmult   = coeffsForIntegrationOrder(managerObject%orderOfIntegrationMethod,managerObject%kstep) / real_kstep
+        managerObject%orderOfIntegrationMethod        = managerObject%kstep
+        nqisc      = managerObject%orderOfIntegrationMethod * managerObject%num1stOEqnsSolve
 
         do jspc = 1, managerObject%num1stOEqnsSolve, 2
 
@@ -763,8 +657,8 @@
           i2  = jg1  + nqisc
 
           do kloop = 1, ktloop
-            cnewDerivatives(kloop,i1) = managerObject%dtlos(kloop,jspc) * consmult
-            cnewDerivatives(kloop,i2) = managerObject%dtlos(kloop,jg1)  * consmult
+            cnewDerivatives(kloop,i1) = managerObject%accumulatedError(kloop,jspc) * consmult
+            cnewDerivatives(kloop,i2) = managerObject%accumulatedError(kloop,jg1)  * consmult
           end do
 
         end do
@@ -780,7 +674,7 @@
 !     that this merely leads to additional computations.
 !     ----------------------------------------------------------------
 
-      managerObject%idoub = managerObject%nqq + 1
+      managerObject%idoub = managerObject%orderOfIntegrationMethod + 1
 
 !     =========
       go to 200
@@ -789,6 +683,55 @@
       return
 
       end subroutine Smvgear
+
+
+
+
+
+
+
+
+
+
+      subroutine doMassBalanceAccounting (integrationOrderCoeff, num1stOEqnsSolve, ktloop, amountAddedToEachSpecies, &
+                                       &  accumulatedError, explic, cnewDerivatives)
+
+         implicit none
+#     include "smv2chem_par.h"
+
+         real*8, intent(in) :: integrationOrderCoeff
+         integer, intent(in) :: num1stOEqnsSolve
+         integer, intent(in) :: ktloop
+         real*8, intent(inout) :: amountAddedToEachSpecies(KBLOOP, MXGSAER)
+         real*8, intent(in)  :: accumulatedError (KBLOOP, MXGSAER) ! on a successful return; accumulatedError(kloop,i) contains the estimated one step local error in cnew
+         real*8, intent(in) :: explic(KBLOOP, MXGSAER)
+         real*8, intent(inout) :: cnewDerivatives(KBLOOP, MXGSAER*7)
+
+
+         integer :: i, kloop
+         real*8 :: dtasn1
+
+         if (integrationOrderCoeff == 1.0d0) then
+            do i = 1, num1stOEqnsSolve
+              do kloop = 1, ktloop
+                amountAddedToEachSpecies(kloop,i) = amountAddedToEachSpecies(kloop,i) + accumulatedError(kloop,i) + explic(kloop,i)
+                cnewDerivatives(kloop,i) = cnewDerivatives(kloop,i) + accumulatedError(kloop,i)
+              end do
+            end do
+
+          else
+
+            do i = 1, num1stOEqnsSolve
+              do kloop = 1, ktloop
+                dtasn1         = integrationOrderCoeff * accumulatedError(kloop,i)
+                amountAddedToEachSpecies(kloop,i) = amountAddedToEachSpecies(kloop,i) + dtasn1 + explic(kloop,i)
+                cnewDerivatives (kloop,i) = cnewDerivatives (kloop,i) + dtasn1
+              end do
+            end do
+
+          end if
+
+      end subroutine doMassBalanceAccounting
 
 
 
@@ -806,7 +749,7 @@
 ! Created by: Megan Rose Damon
 !-----------------------------------------------------------------------------
       subroutine computeErrorFromCorrected1stDeriv (num1stOEqnsSolve, ktloop, gloss, &
-                  & currentTimeStep, cnewDerivatives, dtlos)
+                  & currentTimeStep, cnewDerivatives, accumulatedError)
 
          implicit none
 #     include "smv2chem_par.h"
@@ -815,7 +758,7 @@
          real*8, intent(inout) :: gloss (KBLOOP, MXGSAER)
          real*8, intent(in) :: currentTimeStep
          real*8, intent(in) :: cnewDerivatives(KBLOOP, MXGSAER*7)
-         real*8, intent(in)  :: dtlos (KBLOOP, MXGSAER)!
+         real*8, intent(in)  :: accumulatedError (KBLOOP, MXGSAER)!
 
          integer jspc, j, kloop
 
@@ -823,7 +766,7 @@
            j = jspc + num1stOEqnsSolve
            do kloop = 1, ktloop
              gloss(kloop,jspc) = (currentTimeStep * gloss(kloop,jspc)) -  &
-                  (cnewDerivatives(kloop,j) + dtlos(kloop,jspc))
+                  (cnewDerivatives(kloop,j) + accumulatedError(kloop,jspc))
            end do
          end do
 
@@ -891,49 +834,6 @@
       end subroutine
 
 
-      !   smvdm    : amount added to each spc at each grid-cell (# cm^-3 for gas chemistry (?))
-      subroutine updateChemistryMassBalance (ktloop, cnewDerivatives, explic, smvdm, &
-         & prDiag, managerObject)
-
-         use GmiManager_mod
-         implicit none
-
-#     include "smv2chem_par.h"
-
-         integer, intent(in) :: ktloop
-         real*8, intent(inout) :: cnewDerivatives(KBLOOP, MXGSAER*7)
-         real*8, intent(in) :: explic(KBLOOP, MXGSAER)
-         real*8, intent(inout) :: smvdm(KBLOOP, MXGSAER)
-         logical, intent(in) :: prDiag
-         type (Manager_type) :: managerObject
-
-         real :: dtasn1
-         integer :: i,kloop
-
-         ! double check, but it looks like we can eliminate the first part
-         if (prDiag) Write(*,*) "Update Chemistry Mass Balance"
-
-       if (managerObject%asn1 == 1.0d0) then
-          do i = 1, managerObject%num1stOEqnsSolve
-            do kloop = 1, ktloop
-              smvdm(kloop,i) = smvdm(kloop,i) + managerObject%dtlos(kloop,i) + explic(kloop,i)
-              cnewDerivatives(kloop,i) = cnewDerivatives(kloop,i) + managerObject%dtlos(kloop,i)
-            end do
-          end do
-
-        else
-
-          do i = 1, managerObject%num1stOEqnsSolve
-            do kloop = 1, ktloop
-              dtasn1         = managerObject%asn1 * managerObject%dtlos(kloop,i)
-              smvdm(kloop,i) = smvdm(kloop,i) + dtasn1 + explic(kloop,i)
-              cnewDerivatives (kloop,i) = cnewDerivatives (kloop,i) + dtasn1
-            end do
-          end do
-
-        end if
-
-      end subroutine
 
 
 
@@ -1367,7 +1267,7 @@
 !            ncs + ICS => for nighttime gas chemistry
 !   cc2    : array of sparseMatrixDimension units holding values of each matrix
 !            position actually used; originally,
-!            cc2 = P = I - currentTimeStep * aset(nqq,1) * partial_derivatives;
+!            cc2 = P = I - currentTimeStep * coeffsForIntegrationOrder(orderOfIntegrationMethod,1) * partial_derivatives;
 !            however, cc2 is decomposed here
 !   vdiag  : 1 / current diagonal term of the decomposed matrix
 !

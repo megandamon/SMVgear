@@ -39,7 +39,10 @@ module GmiManager_mod
    public :: updateAfterNonConvTightenLimits
    public :: updateAfterAccumErrorTestFails
    public :: resetTermsBeforeStartingOver
+   public :: updateAndResetAfterSucessfulStep
+   public :: storeAccumErrorAndSetTimeStepRatio
 
+   public :: LIMIT_EXCESSIVE_FAILURES
    public :: REORDER_GRID_CELLS, SOLVE_CHEMISTRY
    public :: EVAL_PREDICTOR, DO_NOT_EVAL_PREDICTOR, PREDICTOR_JUST_CALLED
    public :: STEP_SUCCESS, STEP_FAILURE
@@ -48,6 +51,7 @@ module GmiManager_mod
    integer, parameter :: SOLVE_CHEMISTRY = 2
    integer, parameter :: STEP_SUCCESS = 1
    integer, parameter :: STEP_FAILURE = 0
+   integer, parameter :: LIMIT_EXCESSIVE_FAILURES = 100
 
    ! MRD: do these belong here?
    integer, parameter :: EVAL_PREDICTOR = 1
@@ -80,7 +84,7 @@ module GmiManager_mod
        real*8  :: maxTimeStep ! max time step at a given time (s)
        real*8  :: failureFraction ! = 1 originially, but is decreased if excessive failures
                ! occur in order to reduce absolute error tolerance
-       real*8  :: timeremain ! remaining time in an chem interval (s)
+       real*8  :: timeRemainingInChemInterval ! remaining time in an chem interval (s)
        real*8  :: iabove
        real*8  :: initialError, initialError_inv
        real*8  :: errmax_ncs_inv
@@ -89,21 +93,21 @@ module GmiManager_mod
        real*8  :: reltol1, reltol2, reltol3
        real*8  :: rmsError
        integer :: idoub ! records # of steps since the last change in step size or
-               ! order; it must be at least kstep = nqq+1 before doubling is
+               ! order; it must be at least kstep = orderOfIntegrationMethod+1 before doubling is
                ! allowed
        integer :: nslp ! last time step # during which "Pderiv" was called
        integer :: numExcessiveFailures ! counts # of times Smvgear starts over at order 1 because of
                ! excessive failures
 
-       integer :: nqqold ! value of nqq during last time step
-       integer :: nqq ! order of integration method; varies between 1 and MAXORD
-       integer :: kstep ! nqq + 1
-       real*8  :: hratio ! relative change in currentTimeStep*aset(1) each change in step or order
+       integer :: oldOrderOfIntegrationMethod ! value of orderOfIntegrationMethod during last time step
+       integer :: orderOfIntegrationMethod ! order of integration method; varies between 1 and MAXORD
+       integer :: kstep ! orderOfIntegrationMethod + 1
+       real*8  :: hratio ! relative change in currentTimeStep*coeffsForIntegrationOrder(1) each change in step or order
                ! when Abs(hratio-1) > MAX_REL_CHANGE, reset jeval = 1 to call Pderiv
-       real*8 :: asn1 ! value of aset(nqq,1)
+       real*8 :: integrationOrderCoeff1 ! value of coeffsForIntegrationOrder(orderOfIntegrationMethod,1)
        real*8 :: enqq ! pertst^2*order for current order
        real*8  :: conp1, conp2, conp3
-       integer :: nqqisc ! nqq * num1stOEqnsSolve
+       integer :: nqqisc ! orderOfIntegrationMethod * num1stOEqnsSolve
        real*8 :: timeStepRatio ! factor by which currentTimeStep is increased or decreased
        real*8 :: rdelmax ! max factor by which currentTimeStep can be increased in a single step;
                !                 as in Lsodes, set it to 1d4 initially to compensate for the
@@ -113,8 +117,8 @@ module GmiManager_mod
        real*8  :: drate ! parameter which is used to determine whether convergence
                !                 has occurred
        real*8  :: dcon
-       real*8  :: dtlos (KBLOOP, MXGSAER)! an array of length num1stOEqnsSolve, used for the accumulated corrections;
-               ! on a successful return; dtlos(kloop,i) contains the estimated one step local error in cnew
+       real*8  :: accumulatedError (KBLOOP, MXGSAER)! an array of length num1stOEqnsSolve, used for the accumulated corrections;
+               ! on a successful return; accumulatedError(kloop,i) contains the estimated one step local error in cnew
       real*8  :: chold (KBLOOP, MXGSAER) ! 1 / (reltol * cnew + abtol); multiply chold by local errors in different error tests
       real*8  :: timeStepRatioLowerOrder ! time step ratio at one order lower  than current order
       real*8  :: timeStepRatioHigherOrder ! time step ratio at one order higher than current order
@@ -125,6 +129,68 @@ module GmiManager_mod
     end type Manager_type
 
 contains
+
+!-----------------------------------------------------------------------------
+!
+! ROUTINE
+!   storeAccumErrorAndStepTimeStepRatio
+! DESCRIPTION
+! if idoub = 1, store the value of the error (accumulatedError) for the time
+! step prediction, which will occur when idoub = 0,
+! but go on to the next step with the current step size and order
+! if idoub = 0, test the time step and order for a change.
+! Created by: Megan Rose Damon
+!-----------------------------------------------------------------------------
+
+      subroutine storeAccumErrorAndSetTimeStepRatio (this, accumErrorStorage, ktloop)
+         implicit none
+
+         type(Manager_type) :: this
+         integer, intent(in) :: ktloop
+
+         real*8, intent(out) :: accumErrorStorage(KBLOOP, MXGSAER)
+         integer :: jg1, jspc, kloop
+
+         this%idoub = this%idoub - 1
+         if (this%idoub == 1) then
+           do jspc = 1, this%num1stOEqnsSolve, 2
+             jg1 = jspc + 1
+             do kloop = 1, ktloop
+               accumErrorStorage(kloop,jspc) = this%accumulatedError(kloop,jspc)
+               accumErrorStorage(kloop,jg1)  = this%accumulatedError(kloop,jg1)
+             end do
+           end do
+         end if
+
+         this%timeStepRatio = 1.0d0
+
+      end subroutine storeAccumErrorAndSetTimeStepRatio
+
+!-----------------------------------------------------------------------------
+!
+! ROUTINE
+!   resetTermsBeforeStartingOver
+! DESCRIPTION
+! After a successful step, update the concentration and all
+! derivatives, reset told, set ifsuccess = 1, increment numSuccessTdt,
+! Created by: Megan Rose Damon
+!-----------------------------------------------------------------------------
+      subroutine updateAndResetAfterSucessfulStep (this, cnewDerivatives, ktloop)
+
+         implicit none
+
+         type(manager_type) :: this
+         real*8, intent(inout) :: cnewDerivatives(KBLOOP, MXGSAER*7)
+         integer, intent(in) :: ktloop
+
+         this%numFailuresAfterVelocity     = 0
+         this%ifsuccess = STEP_SUCCESS
+         this%numSuccessTdt    = this%numSuccessTdt + 1
+         this%told      = this%elapsedTimeInChemInterval
+
+         call updateDerivatives(this, cnewDerivatives, ktloop)
+
+      end subroutine updateAndResetAfterSucessfulStep
 
 !-----------------------------------------------------------------------------
 !
@@ -246,8 +312,8 @@ contains
 
       do i = 1, this%num1stOEqnsSolve
          do kloop = 1, ktloop
-            this%dtlos(kloop,i) = this%dtlos(kloop,i) + gloss(kloop,i) !*
-            cnew(kloop,i)  = cnewDerivatives(kloop,i)  + (this%asn1 * this%dtlos(kloop,i))
+            this%accumulatedError(kloop,i) = this%accumulatedError(kloop,i) + gloss(kloop,i) !*
+            cnew(kloop,i)  = cnewDerivatives(kloop,i)  + (this%integrationOrderCoeff1 * this%accumulatedError(kloop,i))
             errymax        = gloss(kloop,i) * this%chold(kloop,i) !*
             dely(kloop)    = dely(kloop)    + (errymax * errymax) !*
          end do
@@ -296,7 +362,7 @@ contains
       do jspc = 1, this%num1stOEqnsSolve
         do kloop = 1, ktloop
           concentrationsNew (kloop,jspc) = cnewDerivatives(kloop,jspc)
-          this%dtlos(kloop,jspc) = 0.0d0
+          this%accumulatedError(kloop,jspc) = 0.0d0
         end do
       end do
    end subroutine initCorrector
@@ -315,8 +381,8 @@ contains
       type (Manager_type) :: this
       integer, intent(out) :: evaluatePredictor
 
-      this%nqqold = 0
-      this%nqq    = 1
+      this%oldOrderOfIntegrationMethod = 0
+      this%orderOfIntegrationMethod    = 1
       this%timeStepRatio  = 1.0d0
 
       evaluatePredictor  = EVAL_PREDICTOR
@@ -377,11 +443,11 @@ contains
          i1 = 1
          do j = 2, this%kstep
            i1 = i1 + this%num1stOEqnsSolve
-           asnqqj = coeffsForIntegrationOrder(this%nqq,j)
+           asnqqj = coeffsForIntegrationOrder(this%orderOfIntegrationMethod,j)
            do jspc = 1, this%num1stOEqnsSolve
              i = jspc + i1 - 1
              do kloop = 1, ktloop
-               cnewDerivatives(kloop,i) =  cnewDerivatives(kloop,i) + (asnqqj * this%dtlos(kloop,jspc))
+               cnewDerivatives(kloop,i) =  cnewDerivatives(kloop,i) + (asnqqj * this%accumulatedError(kloop,jspc))
              end do
            end do
          end do
@@ -397,7 +463,7 @@ contains
 
          i1 = this%nqqisc + 1
          j = 0
-         do jb = 1, this%nqq
+         do jb = 1, this%orderOfIntegrationMethod
             i1 = i1 - this%num1stOEqnsSolve
             do i = i1, this%nqqisc
                j = i + this%num1stOEqnsSolve
@@ -434,7 +500,7 @@ contains
          if (prDiag) Write(*,*) "Computing predicted conc and derivatives using pascal triangle matrix"
          i1 = this%nqqisc + 1
 
-         do jb = 1, this%nqq - 1
+         do jb = 1, this%orderOfIntegrationMethod - 1
            i1 = i1 - this%num1stOEqnsSolve
            do i = i1,  this%nqqisc
              j = i + this%num1stOEqnsSolve
@@ -499,7 +565,7 @@ contains
 ! Created by: Megan Rose Damon
 ! cnewDerivatives   : an array of length num1stOEqnsSolve*(MAXORD+1) that carries the
 !   derivatives of cnew, scaled by currentTimeStep^j/factorial(j), where j is
-!   the jth derivative; j varies from 1 to nqq; e.g., conc(jspc,2)
+!   the jth derivative; j varies from 1 to orderOfIntegrationMethod; e.g., conc(jspc,2)
 !   stores currentTimeStep*y' (estimated)
 !-----------------------------------------------------------------------------
    subroutine scaleDerivatives (this, ktloop, cnewDerivatives)
@@ -598,7 +664,7 @@ contains
       type (Manager_type) :: this
 
       this%hratio    = 0.0d0
-      this%asn1      = 1.0d0
+      this%integrationOrderCoeff1      = 1.0d0
       this%ifsuccess = 1
       this%rdelmax   = 1.0d4
 
@@ -627,11 +693,11 @@ contains
 
       !     Estimate the time step ratio (rdeltsm) at the current order.
       !     der2max was calculated during the error tests earlier.
-      rdeltsm = 1.0d0 / ((this%conp2 * this%der2max**enqq2(this%nqq)) + 1.2d-6)
+      rdeltsm = 1.0d0 / ((this%conp2 * this%der2max**enqq2(this%orderOfIntegrationMethod)) + 1.2d-6)
 
       !     Estimate the time step ratio (timeStepRatioLowerOrder) at one order lower than
-      !     the current order.  if nqq = 1, then we cannot test a lower order
-      if (this%nqq > 1) then
+      !     the current order.  if orderOfIntegrationMethod = 1, then we cannot test a lower order
+      if (this%orderOfIntegrationMethod > 1) then
 
          do kloop = 1, ktloop
             dely(kloop) = 0.0d0
@@ -655,7 +721,7 @@ contains
           end if
         end do
 
-        this%timeStepRatioLowerOrder = 1.0d0 / ((this%conp1 * der1max**enqq1(this%nqq)) + 1.3d-6)
+        this%timeStepRatioLowerOrder = 1.0d0 / ((this%conp1 * der1max**enqq1(this%orderOfIntegrationMethod)) + 1.3d-6)
 
       else
         this%timeStepRatioLowerOrder = 0.0d0
@@ -693,7 +759,7 @@ contains
 
       do kloop = 1, ktloop
          do jspc = 1, this%num1stOEqnsSolve
-            errymax     = this%dtlos(kloop,jspc) * this%chold(kloop,jspc)
+            errymax     = this%accumulatedError(kloop,jspc) * this%chold(kloop,jspc)
             dely(kloop) = dely(kloop) + errymax * errymax
           end do
       end do
@@ -750,7 +816,7 @@ contains
         rmsrat = 1.0d0
       end if
 
-      this%dcon = this%rmsError * Min (conpst(this%nqq), conp15(this%nqq)*this%drate)
+      this%dcon = this%rmsError * Min (conpst(this%orderOfIntegrationMethod), conp15(this%orderOfIntegrationMethod)*this%drate)
 
    end subroutine calculateNewRmsError
 
@@ -780,7 +846,7 @@ contains
       integer, intent(in)  :: ncs ! ncs is argument to Smvgear
 
       if (pr_smv2) then
-         Write (lunsmv,950) this%currentTimeStep, this%timeremain, this%failureFraction, relativeErrorTolerance(ncs)
+         Write (lunsmv,950) this%currentTimeStep, this%timeRemainingInChemInterval, this%failureFraction, relativeErrorTolerance(ncs)
       end if
 
       950    format ('Smvgear:  currentTimeStep      = ', 1pe9.3, /,  '          timremain = ', 1pe9.3, /,  &
@@ -825,7 +891,7 @@ contains
 
       real*8  :: hmtim
 
-      hmtim  = Min (this%maxTimeStep, this%timeremain)
+      hmtim  = Min (this%maxTimeStep, this%timeRemainingInChemInterval)
       this%timeStepRatio  = Min (this%timeStepRatio, this%rdelmax, hmtim/this%currentTimeStep)
       this%currentTimeStep   = this%currentTimeStep   * this%timeStepRatio
 
@@ -862,17 +928,17 @@ contains
       real*8 :: eup ! pertst^2*order for one order higher than current order
       real*8  :: edwn ! pertst^2*order for one order lower  than current order
 
-      this%nqqold = this%nqq
-      this%kstep  = this%nqq + 1
-      this%hratio = this%hratio * coeffsForIntegrationOrder(this%nqq,1) / this%asn1
-      this%asn1   = coeffsForIntegrationOrder(this%nqq,1)
-      this%enqq   = coeffsForSelectingStepAndOrder(this%nqq,1) * this%order
-      eup    = coeffsForSelectingStepAndOrder(this%nqq,2) * this%order
-      edwn   = coeffsForSelectingStepAndOrder(this%nqq,3) * this%order
-      this%conp3  = 1.4d0 /  (eup**enqq3(this%nqq)) !eup is zero
-      this%conp2  = 1.2d0 / (this%enqq**enqq2(this%nqq)) !enqq is zero
-      this%conp1  = 1.3d0 / (edwn**enqq1(this%nqq)) !edwn is zero
-      this%nqqisc = this%nqq * this%num1stOEqnsSolve
+      this%oldOrderOfIntegrationMethod = this%orderOfIntegrationMethod
+      this%kstep  = this%orderOfIntegrationMethod + 1
+      this%hratio = this%hratio * coeffsForIntegrationOrder(this%orderOfIntegrationMethod,1) / this%integrationOrderCoeff1
+      this%integrationOrderCoeff1   = coeffsForIntegrationOrder(this%orderOfIntegrationMethod,1)
+      this%enqq   = coeffsForSelectingStepAndOrder(this%orderOfIntegrationMethod,1) * this%order
+      eup    = coeffsForSelectingStepAndOrder(this%orderOfIntegrationMethod,2) * this%order
+      edwn   = coeffsForSelectingStepAndOrder(this%orderOfIntegrationMethod,3) * this%order
+      this%conp3  = 1.4d0 /  (eup**enqq3(this%orderOfIntegrationMethod)) !eup is zero
+      this%conp2  = 1.2d0 / (this%enqq**enqq2(this%orderOfIntegrationMethod)) !enqq is zero
+      this%conp1  = 1.3d0 / (edwn**enqq1(this%orderOfIntegrationMethod)) !edwn is zero
+      this%nqqisc = this%orderOfIntegrationMethod * this%num1stOEqnsSolve
 
    end subroutine updateCoefficients
 
@@ -912,7 +978,7 @@ contains
       end do
 
       delt1 = Sqrt (this%initialError / (abst2(ncs) + (rmstop * this%order_inv)))
-      this%currentTimeStep  = Max  (Min (delt1, this%timeremain, this%maxTimeStep), HMIN)
+      this%currentTimeStep  = Max  (Min (delt1, this%timeRemainingInChemInterval, this%maxTimeStep), HMIN)
 
    end subroutine calcInitialTimeStepSize
 
@@ -979,7 +1045,7 @@ contains
       this%numExcessiveFailures   = 0
       this%elapsedTimeInChemInterval    = 0.0d0
       this%told      = 0.0d0
-      this%timeremain = this%chemTimeInterval
+      this%timeRemainingInChemInterval = this%chemTimeInterval
 
       this%reltol1   = this%failureFraction * this%initialError_inv
 
