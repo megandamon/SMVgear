@@ -296,36 +296,34 @@
       endif
 
 
-
-
-
       call calculateTimeStep (managerObject, evaluatePredictor, MAX_REL_CHANGE)
       if (managerObject%currentTimeStep < HMIN) then
         call tightenErrorTolerance (managerObject, pr_smv2, lunsmv, ncs)
         go to 100
-      end if
 
-      if (managerObject%timeStepRatio /= 1.0d0) then
-         call scaleDerivatives (managerObject, ktloop, cnewDerivatives)
-      end if
+      else
 
-      if (managerObject%ifsuccess == 1) then
-         managerObject%rdelmax = 10.0d0
-
-         if (Mod (managerObject%numSuccessTdt, 3) == 2) then
-            call calcNewAbsoluteErrorTolerance (managerObject, cnew, concAboveAbtolCount, &
-               &  ktloop, absoluteErrTolerance, ncs)
+         if (managerObject%timeStepRatio /= 1.0d0) then
+            call scaleDerivatives (managerObject, ktloop, cnewDerivatives)
          end if
 
-         call updateChold (managerObject, ktloop, cnew, absoluteErrTolerance)
-      end if
+         if (managerObject%ifsuccess == 1) then
+            managerObject%rdelmax = 10.0d0
 
-      call predictConcAndDerivatives (managerObject, cnewDerivatives, explic, ktloop, prDiag)
+            if (Mod (managerObject%numSuccessTdt, 3) == 2) then
+               call calcNewAbsoluteErrorTolerance (managerObject, cnew, concAboveAbtolCount, &
+                  &  ktloop, absoluteErrTolerance, ncs)
+            end if
 
-      call old250Block(cc2, cnew, cnewDerivatives, evaluatePredictor, ktloop, managerObject, mechanismObject, ncsp, numFinalMatrixPositions, r1delt, vdiag)
-      call old300Block(ilat, ilong, itloop, cc2, cnew, cnewDerivatives, dely, do_semiss_inchem, gloss, inewold, jlooplo, jreorder, ktloop, managerObject, mechanismObject, ncs, ncsp, nfdh1, ntspec, vdiag, yemis)
+            call updateChold (managerObject, ktloop, cnew, absoluteErrTolerance)
+         end if
 
+         call predictConcAndDerivatives (managerObject, cnewDerivatives, explic, ktloop, prDiag)
 
+         call old250Block(cc2, cnew, cnewDerivatives, evaluatePredictor, ktloop, managerObject, mechanismObject, ncsp, numFinalMatrixPositions, r1delt, vdiag)
+         call old300Block(ilat, ilong, itloop, cc2, cnew, cnewDerivatives, dely, do_semiss_inchem, gloss, inewold, jlooplo, jreorder, ktloop, managerObject, mechanismObject, ncs, ncsp, nfdh1, ntspec, vdiag, yemis)
+
+   end if
 
   500 continue
 
@@ -357,6 +355,7 @@
              ! calls corrector loop / re-evaluates predictor
             call old250Block(cc2, cnew, cnewDerivatives, evaluatePredictor, ktloop, managerObject, mechanismObject, ncsp, numFinalMatrixPositions, r1delt, vdiag)
             call old300Block(ilat, ilong, itloop, cc2, cnew, cnewDerivatives, dely, do_semiss_inchem, gloss, inewold, jlooplo, jreorder, ktloop, managerObject, mechanismObject, ncs, ncsp, nfdh1, ntspec, vdiag, yemis)
+            goto 500
 
            end if
 
