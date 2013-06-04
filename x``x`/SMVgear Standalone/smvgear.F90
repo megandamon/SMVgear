@@ -291,83 +291,7 @@
                            & cnewDerivatives, cnew, managerObject%currentTimeStep, gloss)
 
  200  continue
-      do while (.true.)
-            print*, "in 200"
-
-            if (managerObject%orderOfIntegrationMethod /= managerObject%oldOrderOfIntegrationMethod) then
-               call updateCoefficients (managerObject)
-            endif
-
-
-            call calculateTimeStep (managerObject, evaluatePredictor, MAX_REL_CHANGE)
-            if (managerObject%currentTimeStep < HMIN) then
-              call tightenErrorTolerance (managerObject, pr_smv2, lunsmv, ncs)
-
-              ! in between the !---s, there was a go to 100
-      !---
-
-               !     Start time interval or re-enter after total failure.
-               call startTimeInterval (managerObject, ncs)
-               call initConcentrationArray(ktloop, cnew, corig, managerObject)
-
-               !     Re-enter here if total failure or if restarting with new cell block.
-              call resetBeforeUpdate (managerObject)
-
-      !!DIR$ INLINE
-               call updatePhotoDissRates  (mechanismObject, ktloop, numActiveReactants, ncs, ncsp, jphotrat, pratk1)
-      !!DIR$ NOINLINE
-
-               call velocity(mechanismObject, managerObject%num1stOEqnsSolve, ncsp, cnew, gloss, nfdh1)
-               managerObject%numCallsVelocity = managerObject%numCallsVelocity + 1
-               call setBoundaryConditions (mechanismObject, itloop, jreorder, jlooplo, ilat, &
-                     & ilong, ntspec, ncs, inewold, do_semiss_inchem, gloss, yemis)
-
-               do kloop = 1, ktloop
-                  dely(kloop) = 0.0d0
-               end do
-
-               call determineInitialAbTol(managerObject, cnew, concAboveAbtolCount, ireord, ktloop, ncs, absoluteErrTolerance)
-               call calculateErrorTolerances (managerObject, ktloop, cnew, gloss, dely)
-
-               if (ireord /= SOLVE_CHEMISTRY) then
-                  do kloop = 1, ktloop
-                     errmx2(jlooplo+kloop) = dely(kloop)
-                  end do
-                  return
-               end if
-
-               call calcInitialTimeStepSize (managerObject, ktloop, dely, ncs)
-               call setInitialOrder (managerObject, evaluatePredictor)
-               call storeInitConcAndDerivatives(managerObject%num1stOEqnsSolve, ktloop, &
-                                 & cnewDerivatives, cnew, managerObject%currentTimeStep, gloss)
-      ! ---
-
-            else
-               print*, "in else of 200 "
-               if (managerObject%timeStepRatio /= 1.0d0) then
-                  call scaleDerivatives (managerObject, ktloop, cnewDerivatives)
-               end if
-
-               if (managerObject%ifsuccess == 1) then
-                  managerObject%rdelmax = 10.0d0
-
-                  if (Mod (managerObject%numSuccessTdt, 3) == 2) then
-                     call calcNewAbsoluteErrorTolerance (managerObject, cnew, concAboveAbtolCount, &
-                        &  ktloop, absoluteErrTolerance, ncs)
-                  end if
-
-                  call updateChold (managerObject, ktloop, cnew, absoluteErrTolerance)
-               end if
-
-               call predictConcAndDerivatives (managerObject, cnewDerivatives, explic, ktloop, prDiag)
-
-               call old250Block(cc2, cnew, cnewDerivatives, evaluatePredictor, ktloop, managerObject, mechanismObject, ncsp, numFinalMatrixPositions, r1delt, vdiag)
-               call old300Block(ilat, ilong, itloop, cc2, cnew, cnewDerivatives, dely, do_semiss_inchem, gloss, inewold, jlooplo, jreorder, ktloop, managerObject, mechanismObject, ncs, ncsp, nfdh1, ntspec, vdiag, yemis)
-               exit
-
-         end if
-   end do
-
+      call old200CodeBlock(ilat, ilong, itloop, absoluteErrTolerance, cc2, cnew, cnewDerivatives, concAboveAbtolCount, corig, dely, do_semiss_inchem, errmx2, evaluatePredictor, explic, gloss, inewold, ireord, jlooplo, jphotrat, jreorder, kloop, ktloop, lunsmv, managerObject, MAX_REL_CHANGE, mechanismObject, ncs, ncsp, nfdh1, ntspec, numActiveReactants, numFinalMatrixPositions, pr_smv2, pratk1, prDiag, r1delt, vdiag, yemis)
 
 
   500 continue
@@ -567,6 +491,132 @@
       return
 
    end subroutine Smvgear
+
+      subroutine old200CodeBlock(ilat, ilong, itloop, absoluteErrTolerance, cc2, cnew, cnewDerivatives, concAboveAbtolCount, corig, dely, do_semiss_inchem, errmx2, evaluatePredictor, explic, gloss, inewold, ireord, jlooplo, jphotrat, jreorder, kloop, ktloop, lunsmv, managerObject, MAX_REL_CHANGE, mechanismObject, ncs, ncsp, nfdh1, ntspec, numActiveReactants, numFinalMatrixPositions, pr_smv2, pratk1, prDiag, r1delt, vdiag, yemis)
+         use GmiManager_mod
+         use GmiMechanism_mod
+         use GmiSparseMatrix_mod
+         use Smv2Chem2_mod
+         implicit none
+
+#     include "smv2chem_par.h"
+         integer, intent(in) :: ilat
+         integer, intent(in) :: ilong
+         integer, intent(in) :: itloop
+         real*8 :: absoluteErrTolerance(KBLOOP)
+         real*8 :: cc2(KBLOOP, 0:MXARRAY)
+         real*8 :: cnew(KBLOOP, MXGSAER)
+         real*8 :: cnewDerivatives(KBLOOP, MXGSAER*7)
+         integer :: concAboveAbtolCount(KBLOOP, 5)
+         real*8, intent(in) :: corig(KBLOOP, MXGSAER)
+         real*8 :: dely(KBLOOP)
+         logical, intent(in) :: do_semiss_inchem
+         real*8 :: errmx2(itloop)
+         integer :: evaluatePredictor
+         real*8 :: explic(KBLOOP, MXGSAER)
+         real*8 :: gloss(KBLOOP, MXGSAER)
+         integer, intent(in) :: inewold(MXGSAER, ICS)
+         integer, intent(in) :: ireord
+         integer, intent(in) :: jlooplo
+         integer, intent(in) :: jphotrat(ICS)
+         integer, intent(in) :: jreorder(itloop)
+         integer :: kloop
+         integer, intent(in) :: ktloop
+         integer, intent(in) :: lunsmv
+         type(manager_type) :: managerObject
+         real*8 :: MAX_REL_CHANGE
+         type(mechanism_type) :: mechanismObject
+         integer, intent(in) :: ncs
+         integer :: ncsp
+         integer, intent(out) :: nfdh1
+         integer, intent(in) :: ntspec(ICS)
+         integer, intent(in) :: numActiveReactants
+         integer :: numFinalMatrixPositions
+         logical, intent(in) :: pr_smv2
+         real*8, intent(in) :: pratk1(KBLOOP, IPHOT)
+         logical, intent(in) :: prDiag
+         real*8 :: r1delt
+         real*8 :: vdiag(KBLOOP, MXGSAER)
+         real*8, intent(in) :: yemis(ilat*ilong, IGAS)
+
+         do while (.true.)
+               print*, "in 200"
+
+               if (managerObject%orderOfIntegrationMethod /= managerObject%oldOrderOfIntegrationMethod) then
+                  call updateCoefficients (managerObject)
+               endif
+
+
+               call calculateTimeStep (managerObject, evaluatePredictor, MAX_REL_CHANGE)
+               if (managerObject%currentTimeStep < HMIN) then
+                 call tightenErrorTolerance (managerObject, pr_smv2, lunsmv, ncs)
+
+                 ! in between the !---s, there was a go to 100
+         !---
+
+                  !     Start time interval or re-enter after total failure.
+                  call startTimeInterval (managerObject, ncs)
+                  call initConcentrationArray(ktloop, cnew, corig, managerObject)
+
+                  !     Re-enter here if total failure or if restarting with new cell block.
+                 call resetBeforeUpdate (managerObject)
+
+         !!DIR$ INLINE
+                  call updatePhotoDissRates  (mechanismObject, ktloop, numActiveReactants, ncs, ncsp, jphotrat, pratk1)
+         !!DIR$ NOINLINE
+
+                  call velocity(mechanismObject, managerObject%num1stOEqnsSolve, ncsp, cnew, gloss, nfdh1)
+                  managerObject%numCallsVelocity = managerObject%numCallsVelocity + 1
+                  call setBoundaryConditions (mechanismObject, itloop, jreorder, jlooplo, ilat, &
+                        ilong, ntspec, ncs, inewold, do_semiss_inchem, gloss, yemis)
+
+                  do kloop = 1, ktloop
+                     dely(kloop) = 0.0d0
+                  end do
+
+                  call determineInitialAbTol(managerObject, cnew, concAboveAbtolCount, ireord, ktloop, ncs, absoluteErrTolerance)
+                  call calculateErrorTolerances (managerObject, ktloop, cnew, gloss, dely)
+
+                  if (ireord /= SOLVE_CHEMISTRY) then
+                     do kloop = 1, ktloop
+                        errmx2(jlooplo+kloop) = dely(kloop)
+                     end do
+                     return
+                  end if
+
+                  call calcInitialTimeStepSize (managerObject, ktloop, dely, ncs)
+                  call setInitialOrder (managerObject, evaluatePredictor)
+                  call storeInitConcAndDerivatives(managerObject%num1stOEqnsSolve, ktloop, &
+                                    cnewDerivatives, cnew, managerObject%currentTimeStep, gloss)
+         ! ---
+
+               else
+                  print*, "in else of 200 "
+                  if (managerObject%timeStepRatio /= 1.0d0) then
+                     call scaleDerivatives (managerObject, ktloop, cnewDerivatives)
+                  end if
+
+                  if (managerObject%ifsuccess == 1) then
+                     managerObject%rdelmax = 10.0d0
+
+                     if (Mod (managerObject%numSuccessTdt, 3) == 2) then
+                        call calcNewAbsoluteErrorTolerance (managerObject, cnew, concAboveAbtolCount, &
+                           ktloop, absoluteErrTolerance, ncs)
+                     end if
+
+                     call updateChold (managerObject, ktloop, cnew, absoluteErrTolerance)
+                  end if
+
+                  call predictConcAndDerivatives (managerObject, cnewDerivatives, explic, ktloop, prDiag)
+
+                  call old250Block(cc2, cnew, cnewDerivatives, evaluatePredictor, ktloop, managerObject, mechanismObject, ncsp, numFinalMatrixPositions, r1delt, vdiag)
+                  call old300Block(ilat, ilong, itloop, cc2, cnew, cnewDerivatives, dely, do_semiss_inchem, gloss, inewold, jlooplo, jreorder, ktloop, managerObject, mechanismObject, ncs, ncsp, nfdh1, ntspec, vdiag, yemis)
+                  exit
+
+            end if
+         end do
+      end subroutine
+
 
       subroutine old250Block(cc2, cnew, cnewDerivatives, evaluatePredictor, ktloop, managerObject, mechanismObject, ncsp, numFinalMatrixPositions, r1delt, vdiag)
          use GmiManager_mod
