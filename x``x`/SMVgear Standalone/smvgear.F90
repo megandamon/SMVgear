@@ -164,11 +164,7 @@
 
 #     include "smv2chem_par.h"
 
-
-!     ----------------------
-!     Argument declarations.
-!     ----------------------
-
+      ! Argument declarations.
       integer, intent(in) :: CTMi1, CTMi2, CTMju1, CTMj2, CTMk1, CTMk2
       integer, intent(in) :: num_qjo, num_qks, num_qjs, num_active
       real*8 , intent(in   ) :: qjgmi(CTMi1:CTMi2, CTMju1:CTMj2, CTMk1:CTMk2, num_qjo)
@@ -209,7 +205,6 @@
       real*8,  intent(in)  :: corig   (KBLOOP, MXGSAER)
       real*8,  intent(in)  :: pratk1  (KBLOOP, IPHOT)
       real*8,  intent(in)  :: yemis   (ilat*ilong, IGAS)
-
       real*8,  intent(inout) :: errmx2(itloop)
 		!K: Why is cc2 passed in/out?  Seems silly
 		!K: Same question for everything but cnew
@@ -219,60 +214,48 @@
       real*8,  intent(inout) :: amountAddedToEachSpecies (KBLOOP, MXGSAER)
       real*8,  intent(inout) :: vdiag (KBLOOP, MXGSAER)
       real*8,  intent(inout) :: rrate (KBLOOP, NMTRATE)
-
       integer, intent(out) :: nfdh1
       logical, intent(in)  :: prDiag
 
-
-!     Variable declarations.
-      integer :: i, j, k
+      ! Variable declarations.
       integer :: evaluatePredictor
-      integer :: kloop
+      integer :: kloop ! loops over cell block
       integer :: ncsp  ! ncs       => for daytime   gas chemistry
                        ! ncs + ICS => for nighttime gas chemistry
       integer :: ibcb(IGAS)
-
-!     concAboveAbtolCount : counts # of concs above abtol(i), i = 1..
+      ! counts # of concs above abtol(i), i = 1..
       integer :: concAboveAbtolCount(KBLOOP, 5)
-
-      real*8  :: errymax
       real*8  :: r1delt
       real*8  :: xtimestep
 
       real*8, parameter  :: MAX_REL_CHANGE = 0.3d0
 
-!     dely   : tbd
-!     yabst  : absolute error tolerance (molec/cm^-3 for gases)!
-!     cest   : stores value of accumulatedError when idoub = 1
-!     explic : tbd
-!     cnewDerivatives   : an array of length num1stOEqnsSolve*(MAXORD+1) that carries the
-!              derivatives of cnew, scaled by currentTimeStep^j/factorial(j), where j is
-!              the jth derivative; j varies from 1 to orderOfIntegrationMethod; e.g., cnewDerivatives(jspc,2)
-!              stores currentTimeStep*y' (estimated)
       real*8  :: dely  (KBLOOP)
-      real*8  :: yabst (KBLOOP)
-      real*8  :: cest  (KBLOOP, MXGSAER)
+      real*8  :: absoluteErrTolerance (KBLOOP) !(molec/cm^-3 for gases)
+      real*8  :: accumulatedErrorStorage  (KBLOOP, MXGSAER) ! stores value of accumulatedError when idoub = 1
       real*8  :: explic(KBLOOP, MXGSAER)
+      ! an array of length num1stOEqnsSolve*(MAXORD+1) that carries the
+      ! derivatives of cnew, scaled by currentTimeStep^j/factorial(j), where j is
+      ! the jth derivative; j varies from 1 to orderOfIntegrationMethod; e.g., cnewDerivatives(jspc,2)
+      ! stores currentTimeStep*y' (estimated)
       real*8  :: cnewDerivatives  (KBLOOP, MXGSAER*7)
 
       type (Mechanism_type) :: mechanismObject
       type (Manager_type) :: managerObject
-      integer :: nondiag     ! # of final matrix positions, excluding diagonal
+      integer :: numFinalMatrixPositions ! excluding diagonal
 
 #     include "setkin_ibcb.h"
-
-
 
       call initializeMechanism (mechanismObject, ktloop, irma, &
                               &  irmb, irmc, nfdh2, nfdh3, nfdrep, rrate)
       call resetGear (managerObject, ncsp, ncs, ifsun, hmaxnit)
+
 
  100  continue
 
       !     Start time interval or re-enter after total failure.
       call startTimeInterval (managerObject, ncs)
       call initConcentrationArray(ktloop, cnew, corig, managerObject)
-
 
       !     Re-enter here if total failure or if restarting with new cell block.
  150  continue
@@ -291,7 +274,7 @@
          dely(kloop) = 0.0d0
       end do
 
-      call determineInitialAbTol(managerObject, cnew, concAboveAbtolCount, ireord, ktloop, ncs, yabst)
+      call determineInitialAbTol(managerObject, cnew, concAboveAbtolCount, ireord, ktloop, ncs, absoluteErrTolerance)
       call calculateErrorTolerances (managerObject, ktloop, cnew, gloss, dely)
 
       if (ireord /= SOLVE_CHEMISTRY) then
@@ -326,10 +309,10 @@
 
          if (Mod (managerObject%numSuccessTdt, 3) == 2) then
             call calcNewAbsoluteErrorTolerance (managerObject, cnew, concAboveAbtolCount, &
-               &  ktloop, yabst, ncs)
+               &  ktloop, absoluteErrTolerance, ncs)
          end if
 
-         call updateChold (managerObject, ktloop, cnew, yabst)
+         call updateChold (managerObject, ktloop, cnew, absoluteErrTolerance)
       end if
 
       call predictConcAndDerivatives (managerObject, cnewDerivatives, explic, ktloop, prDiag)
@@ -342,9 +325,9 @@
       if (evaluatePredictor == EVAL_PREDICTOR) then
 
          r1delt = -managerObject%integrationOrderCoeff1 * managerObject%currentTimeStep
-         nondiag  = sparseMatrixDimension(ncsp) - managerObject%num1stOEqnsSolve
+         numFinalMatrixPositions  = sparseMatrixDimension(ncsp) - managerObject%num1stOEqnsSolve
 
-         call calculatePredictor (nondiag, sparseMatrixDimension(ncsp), &
+         call calculatePredictor (numFinalMatrixPositions, sparseMatrixDimension(ncsp), &
                & ktloop, cnew, npdhi(ncsp), npdlo(ncsp), r1delt, cc2, &
                & mechanismObject%rateConstants)
 
@@ -375,10 +358,8 @@
 
       call Backsub (managerObject%num1stOEqnsSolve, ktloop, ncsp, cc2, vdiag, gloss)
 
-      call sumAccumulatedError (managerObject, cnew, cnewDerivatives, dely, errymax, gloss, &
-                                 ktloop)
+      call sumAccumulatedError (managerObject, cnew, cnewDerivatives, dely, gloss, ktloop)
       call calculateNewRmsError (managerObject, ktloop, dely, managerObject%correctorIterations)
-
 
       ! MRD: the comments below may be misleading.
       if (managerObject%dcon > 1.0d0) then ! NON-CONVERGENCE
@@ -430,7 +411,34 @@
             managerObject%ifsuccess = 0
             managerObject%timeStepRatioHigherOrder   = 0.0d0
 
-            go to 400
+            !go to 400
+            call estimateTimeStepRatio (managerObject, ktloop, dely, cnewDerivatives)
+
+            !     If the last step was successful and timeStepRatio is small, keep the
+            !     current step and order, and allow three successful steps before
+            !     re-checking the time step and order.
+            if ((managerObject%timeStepRatio < 1.1d0) .and. (managerObject%ifsuccess == 1)) then
+
+              managerObject%idoub = 3
+
+              go to 200
+
+            ! If the maximum time step ratio is that of one order lower than
+            ! the current order, decrease the order.  Do not minimize timeStepRatio
+            ! to <= 1, when ifsuccess = 0 since this is less efficient.
+            else if (managerObject%timeStepRatio == managerObject%timeStepRatioLowerOrder) then
+              managerObject%orderOfIntegrationMethod = managerObject%orderOfIntegrationMethod - 1
+
+            else if (managerObject%timeStepRatio == managerObject%timeStepRatioHigherOrder) then
+               call increaseOrderAndAddDerivativeTerm (managerObject, cnewDerivatives, ktloop)
+            end if
+
+            !     If the last two steps have failed, re-set idoub to the current
+            !     order + 1.  Do not minimize timeStepRatio if managerObject%numFailuresAfterVelocity >= 2 since tests show
+            !     that this merely leads to additional computations.
+            managerObject%idoub = managerObject%orderOfIntegrationMethod + 1
+
+            go to 200
 
          ! if the first attempts fail, retry the step at timeStepDecreaseFraction
 
@@ -485,7 +493,7 @@
         !       step-size and order: if idoub > 1, decrease idoub and go on to the next time step with
         !       the current step-size and order;
         if (managerObject%idoub > 1) then
-          call storeAccumErrorAndSetTimeStepRatio(managerObject, cest, ktloop)
+          call storeAccumErrorAndSetTimeStepRatio(managerObject, accumulatedErrorStorage, ktloop)
           go to 200
         end if
 
@@ -500,9 +508,7 @@
       !     paired with orders, and choose the order allowing this longest
       !     step.
       call estimateTimeStepRatioOneOrderHigher (managerObject, MAXORD, ktloop, &
-                  errymax, dely, cest)
-
- 400  continue
+                  dely, accumulatedErrorStorage)
 
       call estimateTimeStepRatio (managerObject, ktloop, dely, cnewDerivatives)
 
@@ -526,9 +532,9 @@
          call increaseOrderAndAddDerivativeTerm (managerObject, cnewDerivatives, ktloop)
       end if
 
-!     If the last two steps have failed, re-set idoub to the current
-!     order + 1.  Do not minimize timeStepRatio if managerObject%numFailuresAfterVelocity >= 2 since tests show
-!     that this merely leads to additional computations.
+      !     If the last two steps have failed, re-set idoub to the current
+      !     order + 1.  Do not minimize timeStepRatio if managerObject%numFailuresAfterVelocity >= 2 since tests show
+      !     that this merely leads to additional computations.
       managerObject%idoub = managerObject%orderOfIntegrationMethod + 1
 
       go to 200

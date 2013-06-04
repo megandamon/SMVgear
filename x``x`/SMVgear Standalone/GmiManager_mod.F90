@@ -188,18 +188,19 @@ contains
 !-----------------------------------------------------------------------------
 
       subroutine estimateTimeStepRatioOneOrderHigher (this, maxOrder, ktloop, &
-                  errymax, dely, cest)
+                  dely, cest)
          implicit none
 
          type(Manager_type) :: this
          integer, intent(in) :: maxOrder
          integer, intent(in) :: ktloop
-         real*8, intent(inout) :: errymax
+
          real*8, intent(inout) :: dely(KBLOOP)
          real*8, intent(in) :: cest  (KBLOOP, MXGSAER)
 
          integer :: kloop, jspc
          real*8 :: delyMax
+         real*8 :: errymax
 
          if (this%orderOfIntegrationMethod < maxOrder) then
 
@@ -393,7 +394,7 @@ contains
 ! to chold
 ! Created by: Megan Rose Damon
 !-----------------------------------------------------------------------------
-   subroutine sumAccumulatedError(this, cnew, cnewDerivatives, dely, errymax, gloss, &
+   subroutine sumAccumulatedError(this, cnew, cnewDerivatives, dely, gloss, &
                                  ktloop)
       implicit none
 
@@ -401,11 +402,11 @@ contains
       real*8, intent(out) :: cnew(KBLOOP, MXGSAER)
       real*8, intent(in) :: cnewDerivatives(KBLOOP, MXGSAER*7)
       real*8, intent(inout) :: dely(KBLOOP)
-      real*8, intent(inout) :: errymax
       real*8, intent(in) :: gloss(KBLOOP, MXGSAER)
       integer, intent(in) :: ktloop
 
       integer :: i, kloop
+      real*8 :: errymax
 
       do kloop = 1, ktloop
         dely(kloop) = 0.0d0
@@ -1192,6 +1193,7 @@ contains
          this%numSuccessTdt    = 0
          this%numCallsVelocity   = 0
          this%numErrTolDecreases  = 0
+         this%dcon = 0.0d0
 
          ! MAX_REL_CHANGE moved to parameter
          this%rmsError    = 1.0d0
