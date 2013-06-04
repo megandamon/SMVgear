@@ -294,6 +294,10 @@
          call updateCoefficients (managerObject)
       endif
 
+
+
+
+
       call calculateTimeStep (managerObject, evaluatePredictor, MAX_REL_CHANGE)
       if (managerObject%currentTimeStep < HMIN) then
         call tightenErrorTolerance (managerObject, pr_smv2, lunsmv, ncs)
@@ -359,7 +363,14 @@
       call Backsub (managerObject%num1stOEqnsSolve, ktloop, ncsp, cc2, vdiag, gloss)
 
       call sumAccumulatedError (managerObject, cnew, cnewDerivatives, dely, gloss, ktloop)
+
+
+      print*, "before new rms: ", managerObject%dcon
+
       call calculateNewRmsError (managerObject, ktloop, dely, managerObject%correctorIterations)
+      print*, "after new rms: ", managerObject%dcon
+      !stop
+
 
       ! MRD: the comments below may be misleading.
       if (managerObject%dcon > 1.0d0) then ! NON-CONVERGENCE
@@ -411,7 +422,6 @@
             managerObject%ifsuccess = 0
             managerObject%timeStepRatioHigherOrder   = 0.0d0
 
-            !go to 400
             call estimateTimeStepRatio (managerObject, ktloop, dely, cnewDerivatives)
 
             !     If the last step was successful and timeStepRatio is small, keep the
