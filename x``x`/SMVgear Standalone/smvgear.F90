@@ -322,33 +322,7 @@
 
       call predictConcAndDerivatives (managerObject, cnewDerivatives, explic, ktloop, prDiag)
 
- 250  continue
-
-      call initCorrector (managerObject, ktloop, cnew, cnewDerivatives)
-
-      ! Re-evaluate predictor matrix before starting the corrector iteration.
-      if (evaluatePredictor == EVAL_PREDICTOR) then
-
-         r1delt = -managerObject%integrationOrderCoeff1 * managerObject%currentTimeStep
-         numFinalMatrixPositions  = sparseMatrixDimension(ncsp) - managerObject%num1stOEqnsSolve
-
-         call calculatePredictor (numFinalMatrixPositions, sparseMatrixDimension(ncsp), &
-               & ktloop, cnew, npdhi(ncsp), npdlo(ncsp), r1delt, cc2, &
-               & mechanismObject%rateConstants)
-
-         managerObject%numCallsPredict = managerObject%numCallsPredict + 1
-         evaluatePredictor  = PREDICTOR_JUST_CALLED
-
-! K: Consider un-inlining this.
-!!DIR$   INLINE
-        call Decomp  (managerObject%num1stOEqnsSolve, ktloop, ncsp, cc2, vdiag)
-!!DIR$   NOINLINE
-
-        call setConvergenceTerms (managerObject, MBETWEEN)
-
-      end if
-
-
+      call old250Block(cc2, cnew, cnewDerivatives, evaluatePredictor, ktloop, managerObject, mechanismObject, ncsp, numFinalMatrixPositions, r1delt, vdiag)
       call old300Block(ilat, ilong, itloop, cc2, cnew, cnewDerivatives, dely, do_semiss_inchem, gloss, inewold, jlooplo, jreorder, ktloop, managerObject, mechanismObject, ncs, ncsp, nfdh1, ntspec, vdiag, yemis)
 
 
@@ -380,7 +354,9 @@
              managerObject%numFailOldJacobian = managerObject%numFailOldJacobian + 1
              evaluatePredictor = 1
 
-             go to  250 ! calls corrector loop / re-evaluates predictor
+             ! calls corrector loop / re-evaluates predictor
+            call old250Block(cc2, cnew, cnewDerivatives, evaluatePredictor, ktloop, managerObject, mechanismObject, ncsp, numFinalMatrixPositions, r1delt, vdiag)
+            call old300Block(ilat, ilong, itloop, cc2, cnew, cnewDerivatives, dely, do_semiss_inchem, gloss, inewold, jlooplo, jreorder, ktloop, managerObject, mechanismObject, ncs, ncsp, nfdh1, ntspec, vdiag, yemis)
 
            end if
 
@@ -547,6 +523,55 @@
       return
 
    end subroutine Smvgear
+
+      subroutine old250Block(cc2, cnew, cnewDerivatives, evaluatePredictor, ktloop, managerObject, mechanismObject, ncsp, numFinalMatrixPositions, r1delt, vdiag)
+         use GmiManager_mod
+         use GmiMechanism_mod
+         use GmiSparseMatrix_mod
+         use Smv2Chem2_mod
+         implicit none
+
+#     include "smv2chem_par.h"
+
+         real*8 :: cc2(KBLOOP, 0:MXARRAY)
+         real*8 :: cnew(KBLOOP, MXGSAER)
+         real*8 :: cnewDerivatives(KBLOOP, MXGSAER*7)
+
+         integer :: evaluatePredictor
+         integer, intent(in) :: ktloop
+         type(manager_type) :: managerObject
+         type(mechanism_type) :: mechanismObject
+         integer :: ncsp
+         integer :: numFinalMatrixPositions
+
+         real*8 :: r1delt
+         real*8 :: vdiag(KBLOOP, MXGSAER)
+
+         call initCorrector (managerObject, ktloop, cnew, cnewDerivatives)
+
+         ! Re-evaluate predictor matrix before starting the corrector iteration.
+         if (evaluatePredictor == EVAL_PREDICTOR) then
+
+            r1delt = -managerObject%integrationOrderCoeff1 * managerObject%currentTimeStep
+            numFinalMatrixPositions  = sparseMatrixDimension(ncsp) - managerObject%num1stOEqnsSolve
+
+            call calculatePredictor (numFinalMatrixPositions, sparseMatrixDimension(ncsp), &
+                  ktloop, cnew, npdhi(ncsp), npdlo(ncsp), r1delt, cc2, &
+                  mechanismObject%rateConstants)
+
+            managerObject%numCallsPredict = managerObject%numCallsPredict + 1
+            evaluatePredictor  = PREDICTOR_JUST_CALLED
+
+         ! K: Consider un-inlining this.
+         !!DIR$   INLINE
+           call Decomp  (managerObject%num1stOEqnsSolve, ktloop, ncsp, cc2, vdiag)
+         !!DIR$   NOINLINE
+
+           call setConvergenceTerms (managerObject, MBETWEEN)
+
+         end if
+      end subroutine
+
 
       subroutine old300Block (ilat, ilong, itloop, cc2, cnew, cnewDerivatives, dely, do_semiss_inchem, gloss, inewold, jlooplo, jreorder, ktloop, managerObject, mechanismObject, ncs, ncsp, nfdh1, ntspec, vdiag, yemis)
          use GmiManager_mod
