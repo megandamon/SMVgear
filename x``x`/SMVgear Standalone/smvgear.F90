@@ -349,12 +349,7 @@
       end if
 
 
- 300  continue
       call old300Block(ilat, ilong, itloop, cc2, cnew, cnewDerivatives, dely, do_semiss_inchem, gloss, inewold, jlooplo, jreorder, ktloop, managerObject, mechanismObject, ncs, ncsp, nfdh1, ntspec, vdiag, yemis)
-
-
-
-
 
 
 
@@ -374,7 +369,9 @@
            ! If nonconvergence after one step, re-evaluate first derivative with new values of cnew.
            if (managerObject%correctorIterations == 1) then
 
-             go to 300 ! re-eval first derivative (calls velocity)
+             ! re-eval first derivative (calls velocity)
+             call old300Block(ilat, ilong, itloop, cc2, cnew, cnewDerivatives, dely, do_semiss_inchem, gloss, inewold, jlooplo, jreorder, ktloop, managerObject, mechanismObject, ncs, ncsp, nfdh1, ntspec, vdiag, yemis)
+             goto 500
 
             ! If the Jacobian (predictor?) matrix is more than one step old, update it,
             !  and try convergence again.
