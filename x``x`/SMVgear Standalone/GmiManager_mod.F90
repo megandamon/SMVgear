@@ -918,7 +918,12 @@ contains
         rmsrat = 1.0d0
       end if
 
-      this%dcon = this%rmsError * Min (conpst(this%orderOfIntegrationMethod), conp15(this%orderOfIntegrationMethod)*this%drate)
+      if (this%orderOfIntegrationMethod /= 0) then
+         this%dcon = this%rmsError * Min (conpst(this%orderOfIntegrationMethod), conp15(this%orderOfIntegrationMethod)*this%drate)
+         print*, "calculating dcon: ", this%dcon
+      else
+         this%dcon = 0
+      endif
 
    end subroutine calculateNewRmsError
 

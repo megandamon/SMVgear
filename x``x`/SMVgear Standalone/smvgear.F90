@@ -250,8 +250,10 @@
                               &  irmb, irmc, nfdh2, nfdh3, nfdrep, rrate)
       call resetGear (managerObject, ncsp, ncs, ifsun, hmaxnit)
 
+      goto 500
 
  100  continue
+      print*, "in 100"
 
       !     Start time interval or re-enter after total failure.
       call startTimeInterval (managerObject, ncs)
@@ -365,189 +367,195 @@
       call sumAccumulatedError (managerObject, cnew, cnewDerivatives, dely, gloss, ktloop)
 
 
-      print*, "before new rms: ", managerObject%dcon
-
-      call calculateNewRmsError (managerObject, ktloop, dely, managerObject%correctorIterations)
-      print*, "after new rms: ", managerObject%dcon
-      !stop
+  500 continue
 
 
-      ! MRD: the comments below may be misleading.
-      if (managerObject%dcon > 1.0d0) then ! NON-CONVERGENCE
+      if (managerObject%dcon == 0.0d0) then
+         print*, "dcon is 0"
+         call calculateNewRmsError (managerObject, ktloop, dely, managerObject%correctorIterations)
+         goto 100
 
-        ! If nonconvergence after one step, re-evaluate first derivative with new values of cnew.
-        if (managerObject%correctorIterations == 1) then
+      else
 
-          go to 300 ! re-eval first derivative (calls velocity)
+         call calculateNewRmsError (managerObject, ktloop, dely, managerObject%correctorIterations)
+         ! MRD: the comments below may be misleading.
+         if (managerObject%dcon > 1.0d0) then ! NON-CONVERGENCE
 
-         ! If the Jacobian (predictor?) matrix is more than one step old, update it,
-         !  and try convergence again.
-        else if (evaluatePredictor == DO_NOT_EVAL_PREDICTOR) then
+           ! If nonconvergence after one step, re-evaluate first derivative with new values of cnew.
+           if (managerObject%correctorIterations == 1) then
 
-          managerObject%numFailOldJacobian = managerObject%numFailOldJacobian + 1
-          evaluatePredictor = 1
+             go to 300 ! re-eval first derivative (calls velocity)
 
-          go to  250 ! calls corrector loop / re-evaluates predictor
+            ! If the Jacobian (predictor?) matrix is more than one step old, update it,
+            !  and try convergence again.
+           else if (evaluatePredictor == DO_NOT_EVAL_PREDICTOR) then
 
-        end if
+             managerObject%numFailOldJacobian = managerObject%numFailOldJacobian + 1
+             evaluatePredictor = 1
 
-         ! if the Jacobian is current, then reduce the time step,
-         ! reset the accumulated derivatives to their values before the failed step,
-         ! and retry with the smaller step.
-         evaluatePredictor     = EVAL_PREDICTOR
-         call updateAfterNonConvTightenLimits (managerObject, 2.0d0, managerObject%told, timeStepDecreaseFraction)
-         call resetCnewDerivatives(managerObject, cnewDerivatives, ktloop)
+             go to  250 ! calls corrector loop / re-evaluates predictor
 
-        go to 200 ! tighten limit, then re-evaluate the predictor, then call velocity
+           end if
 
-      end if
+            ! if the Jacobian is current, then reduce the time step,
+            ! reset the accumulated derivatives to their values before the failed step,
+            ! and retry with the smaller step.
+            evaluatePredictor     = EVAL_PREDICTOR
+            call updateAfterNonConvTightenLimits (managerObject, 2.0d0, managerObject%told, timeStepDecreaseFraction)
+            call resetCnewDerivatives(managerObject, cnewDerivatives, ktloop)
 
-      ! The corrector iteration CONVERGED.
-      evaluatePredictor = DO_NOT_EVAL_PREDICTOR
-      if (managerObject%correctorIterations > 1) then
-         call testAccumulatedError (managerObject, ktloop, dely)
-      end if
-
-      ! The accumulated error test failed.
-      if (managerObject%der2max > managerObject%enqq) then
-
-         ! In all cases, reset the derivatives to their values before the last time step.
-         call updateAfterAccumErrorTestFails (managerObject)
-         call resetCnewDerivatives (managerObject, cnewDerivatives, ktloop)
-
-         ! MRD: magic numbers
-         ! re-estimate a time step at the same or one lower order and retry the step;
-         if (managerObject%numFailuresAfterVelocity <= 6) then
-
-            managerObject%ifsuccess = 0
-            managerObject%timeStepRatioHigherOrder   = 0.0d0
-
-            call estimateTimeStepRatio (managerObject, ktloop, dely, cnewDerivatives)
-
-            !     If the last step was successful and timeStepRatio is small, keep the
-            !     current step and order, and allow three successful steps before
-            !     re-checking the time step and order.
-            if ((managerObject%timeStepRatio < 1.1d0) .and. (managerObject%ifsuccess == 1)) then
-
-              managerObject%idoub = 3
-
-              go to 200
-
-            ! If the maximum time step ratio is that of one order lower than
-            ! the current order, decrease the order.  Do not minimize timeStepRatio
-            ! to <= 1, when ifsuccess = 0 since this is less efficient.
-            else if (managerObject%timeStepRatio == managerObject%timeStepRatioLowerOrder) then
-              managerObject%orderOfIntegrationMethod = managerObject%orderOfIntegrationMethod - 1
-
-            else if (managerObject%timeStepRatio == managerObject%timeStepRatioHigherOrder) then
-               call increaseOrderAndAddDerivativeTerm (managerObject, cnewDerivatives, ktloop)
-            end if
-
-            !     If the last two steps have failed, re-set idoub to the current
-            !     order + 1.  Do not minimize timeStepRatio if managerObject%numFailuresAfterVelocity >= 2 since tests show
-            !     that this merely leads to additional computations.
-            managerObject%idoub = managerObject%orderOfIntegrationMethod + 1
-
-            go to 200
-
-         ! if the first attempts fail, retry the step at timeStepDecreaseFraction
-
-         else if (managerObject%numFailuresAfterVelocity <= 20) then
-
-            managerObject%ifsuccess = 0
-            managerObject%timeStepRatio     = timeStepDecreaseFraction
-
-            go to 200
-
-         else
-
-            call resetTermsBeforeStartingOver (managerObject, cnew, cnewDerivatives, &
-                                          & ktloop, lunsmv, pr_smv2)
-
-            if (managerObject%numExcessiveFailures == LIMIT_EXCESSIVE_FAILURES) then
-               if (pr_smv2) Write(*,*) "Smvgear:  Stopping because of excessive errors."
-               call GmiPrintError ('Problem in Smvgear', .true., 0, 0, 0, 0, 0.0d0, 0.0d0)
-            end if
-
-            go to 150
+           go to 200 ! tighten limit, then re-evaluate the predictor, then call velocity
 
          end if
 
-      ! The accumulated error test did not fail
-      else
+         ! The corrector iteration CONVERGED.
+         evaluatePredictor = DO_NOT_EVAL_PREDICTOR
+         if (managerObject%correctorIterations > 1) then
+            call testAccumulatedError (managerObject, ktloop, dely)
+         end if
 
-      !       After a successful step, update the concentration and all
-      !       derivatives, reset told, set ifsuccess = 1, increment numSuccessTdt,
-        if (pr_qqjk .and. do_qqjk_inchem) then
-          xtimestep = managerObject%elapsedTimeInChemInterval - managerObject%told
+         ! The accumulated error test failed.
+         if (managerObject%der2max > managerObject%enqq) then
 
-          call Do_Smv2_Diag  &
+            ! In all cases, reset the derivatives to their values before the last time step.
+            call updateAfterAccumErrorTestFails (managerObject)
+            call resetCnewDerivatives (managerObject, cnewDerivatives, ktloop)
 
-     &      (jlooplo, ktloop, pr_nc_period, tdt, managerObject%told, do_cell_chem,  &
-     &       jreorder, inewold, denair, cnew, xtimestep, &
-     &       yda, qqkda, qqjda, qkgmi, qjgmi, &
-     &       ilong, ilat, ivert, itloop, &
-     &       CTMi1, CTMi2, CTMju1, CTMj2, CTMk1, CTMk2, &
-     &       num_qjo, num_qks, num_qjs, num_active)
-        end if
+            ! MRD: magic numbers
+            ! re-estimate a time step at the same or one lower order and retry the step;
+            if (managerObject%numFailuresAfterVelocity <= 6) then
 
-         call updateAndResetAfterSucessfulStep (managerObject, cnewDerivatives, ktloop)
-         call doMassBalanceAccounting (managerObject%integrationOrderCoeff1, managerObject%num1stOEqnsSolve, ktloop, &
-                                       amountAddedToEachSpecies, managerObject%accumulatedError, explic, cnewDerivatives)
+               managerObject%ifsuccess = 0
+               managerObject%timeStepRatioHigherOrder   = 0.0d0
 
-         !       Exit smvgear if a time interval has been completed.
-        managerObject%timeRemainingInChemInterval = managerObject%chemTimeInterval - managerObject%elapsedTimeInChemInterval
-        if (managerObject%timeRemainingInChemInterval <= 1.0d-06) return
+               call estimateTimeStepRatio (managerObject, ktloop, dely, cnewDerivatives)
 
-        !       idoub counts the number of successful steps before re-testing the
-        !       step-size and order: if idoub > 1, decrease idoub and go on to the next time step with
-        !       the current step-size and order;
-        if (managerObject%idoub > 1) then
-          call storeAccumErrorAndSetTimeStepRatio(managerObject, accumulatedErrorStorage, ktloop)
-          go to 200
-        end if
+               !     If the last step was successful and timeStepRatio is small, keep the
+               !     current step and order, and allow three successful steps before
+               !     re-checking the time step and order.
+               if ((managerObject%timeStepRatio < 1.1d0) .and. (managerObject%ifsuccess == 1)) then
+
+                 managerObject%idoub = 3
+
+                 go to 200
+
+               ! If the maximum time step ratio is that of one order lower than
+               ! the current order, decrease the order.  Do not minimize timeStepRatio
+               ! to <= 1, when ifsuccess = 0 since this is less efficient.
+               else if (managerObject%timeStepRatio == managerObject%timeStepRatioLowerOrder) then
+                 managerObject%orderOfIntegrationMethod = managerObject%orderOfIntegrationMethod - 1
+
+               else if (managerObject%timeStepRatio == managerObject%timeStepRatioHigherOrder) then
+                  call increaseOrderAndAddDerivativeTerm (managerObject, cnewDerivatives, ktloop)
+               end if
+
+               !     If the last two steps have failed, re-set idoub to the current
+               !     order + 1.  Do not minimize timeStepRatio if managerObject%numFailuresAfterVelocity >= 2 since tests show
+               !     that this merely leads to additional computations.
+               managerObject%idoub = managerObject%orderOfIntegrationMethod + 1
+
+               go to 200
+
+            ! if the first attempts fail, retry the step at timeStepDecreaseFraction
+
+            else if (managerObject%numFailuresAfterVelocity <= 20) then
+
+               managerObject%ifsuccess = 0
+               managerObject%timeStepRatio     = timeStepDecreaseFraction
+
+               go to 200
+
+            else
+
+               call resetTermsBeforeStartingOver (managerObject, cnew, cnewDerivatives, &
+                                             & ktloop, lunsmv, pr_smv2)
+
+               if (managerObject%numExcessiveFailures == LIMIT_EXCESSIVE_FAILURES) then
+                  if (pr_smv2) Write(*,*) "Smvgear:  Stopping because of excessive errors."
+                  call GmiPrintError ('Problem in Smvgear', .true., 0, 0, 0, 0, 0.0d0, 0.0d0)
+               end if
+
+               go to 150
+
+            end if
+
+         ! The accumulated error test did not fail
+         else
+
+         !       After a successful step, update the concentration and all
+         !       derivatives, reset told, set ifsuccess = 1, increment numSuccessTdt,
+           if (pr_qqjk .and. do_qqjk_inchem) then
+             xtimestep = managerObject%elapsedTimeInChemInterval - managerObject%told
+
+             call Do_Smv2_Diag  &
+
+        &      (jlooplo, ktloop, pr_nc_period, tdt, managerObject%told, do_cell_chem,  &
+        &       jreorder, inewold, denair, cnew, xtimestep, &
+        &       yda, qqkda, qqjda, qkgmi, qjgmi, &
+        &       ilong, ilat, ivert, itloop, &
+        &       CTMi1, CTMi2, CTMju1, CTMj2, CTMk1, CTMk2, &
+        &       num_qjo, num_qks, num_qjs, num_active)
+           end if
+
+            call updateAndResetAfterSucessfulStep (managerObject, cnewDerivatives, ktloop)
+            call doMassBalanceAccounting (managerObject%integrationOrderCoeff1, managerObject%num1stOEqnsSolve, ktloop, &
+                                          amountAddedToEachSpecies, managerObject%accumulatedError, explic, cnewDerivatives)
+
+            !       Exit smvgear if a time interval has been completed.
+           managerObject%timeRemainingInChemInterval = managerObject%chemTimeInterval - managerObject%elapsedTimeInChemInterval
+           if (managerObject%timeRemainingInChemInterval <= 1.0d-06) return
+
+           !       idoub counts the number of successful steps before re-testing the
+           !       step-size and order: if idoub > 1, decrease idoub and go on to the next time step with
+           !       the current step-size and order;
+           if (managerObject%idoub > 1) then
+             call storeAccumErrorAndSetTimeStepRatio(managerObject, accumulatedErrorStorage, ktloop)
+             go to 200
+           end if
+
+         end if
+
+         !     Test whether to change the step-size and order.
+         !     Determine the time step at (a) one order lower than, (b) the same
+         !     order as, and (c) one order higher than the current order.  In the
+         !     case of multiple grid-cells in a grid-block, find the minimum
+         !     step size among all the cells for each of the orders.  Then, in
+         !     all cases, choose the longest time step among the three steps
+         !     paired with orders, and choose the order allowing this longest
+         !     step.
+         call estimateTimeStepRatioOneOrderHigher (managerObject, MAXORD, ktloop, &
+                     dely, accumulatedErrorStorage)
+
+         call estimateTimeStepRatio (managerObject, ktloop, dely, cnewDerivatives)
+
+
+         !     If the last step was successful and timeStepRatio is small, keep the
+         !     current step and order, and allow three successful steps before
+         !     re-checking the time step and order.
+         if ((managerObject%timeStepRatio < 1.1d0) .and. (managerObject%ifsuccess == 1)) then
+
+           managerObject%idoub = 3
+
+           go to 200
+
+         ! If the maximum time step ratio is that of one order lower than
+         ! the current order, decrease the order.  Do not minimize timeStepRatio
+         ! to <= 1, when ifsuccess = 0 since this is less efficient.
+         else if (managerObject%timeStepRatio == managerObject%timeStepRatioLowerOrder) then
+           managerObject%orderOfIntegrationMethod = managerObject%orderOfIntegrationMethod - 1
+
+         else if (managerObject%timeStepRatio == managerObject%timeStepRatioHigherOrder) then
+            call increaseOrderAndAddDerivativeTerm (managerObject, cnewDerivatives, ktloop)
+         end if
+
+         !     If the last two steps have failed, re-set idoub to the current
+         !     order + 1.  Do not minimize timeStepRatio if managerObject%numFailuresAfterVelocity >= 2 since tests show
+         !     that this merely leads to additional computations.
+         managerObject%idoub = managerObject%orderOfIntegrationMethod + 1
+
+         go to 200
 
       end if
-
-      !     Test whether to change the step-size and order.
-      !     Determine the time step at (a) one order lower than, (b) the same
-      !     order as, and (c) one order higher than the current order.  In the
-      !     case of multiple grid-cells in a grid-block, find the minimum
-      !     step size among all the cells for each of the orders.  Then, in
-      !     all cases, choose the longest time step among the three steps
-      !     paired with orders, and choose the order allowing this longest
-      !     step.
-      call estimateTimeStepRatioOneOrderHigher (managerObject, MAXORD, ktloop, &
-                  dely, accumulatedErrorStorage)
-
-      call estimateTimeStepRatio (managerObject, ktloop, dely, cnewDerivatives)
-
-
-      !     If the last step was successful and timeStepRatio is small, keep the
-      !     current step and order, and allow three successful steps before
-      !     re-checking the time step and order.
-      if ((managerObject%timeStepRatio < 1.1d0) .and. (managerObject%ifsuccess == 1)) then
-
-        managerObject%idoub = 3
-
-        go to 200
-
-      ! If the maximum time step ratio is that of one order lower than
-      ! the current order, decrease the order.  Do not minimize timeStepRatio
-      ! to <= 1, when ifsuccess = 0 since this is less efficient.
-      else if (managerObject%timeStepRatio == managerObject%timeStepRatioLowerOrder) then
-        managerObject%orderOfIntegrationMethod = managerObject%orderOfIntegrationMethod - 1
-
-      else if (managerObject%timeStepRatio == managerObject%timeStepRatioHigherOrder) then
-         call increaseOrderAndAddDerivativeTerm (managerObject, cnewDerivatives, ktloop)
-      end if
-
-      !     If the last two steps have failed, re-set idoub to the current
-      !     order + 1.  Do not minimize timeStepRatio if managerObject%numFailuresAfterVelocity >= 2 since tests show
-      !     that this merely leads to additional computations.
-      managerObject%idoub = managerObject%orderOfIntegrationMethod + 1
-
-      go to 200
 
       return
 
