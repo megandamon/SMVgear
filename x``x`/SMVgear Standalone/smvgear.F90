@@ -253,7 +253,6 @@
       goto 500
 
  100  continue
-      print*, "in 100"
 
       !     Start time interval or re-enter after total failure.
       call startTimeInterval (managerObject, ncs)
@@ -351,27 +350,18 @@
 
 
  300  continue
+      call old300Block(ilat, ilong, itloop, cc2, cnew, cnewDerivatives, dely, do_semiss_inchem, gloss, inewold, jlooplo, jreorder, ktloop, managerObject, mechanismObject, ncs, ncsp, nfdh1, ntspec, vdiag, yemis)
 
-      ! Evaluate the first derivative using corrected values of cnew.
-      call velocity (mechanismObject, managerObject%num1stOEqnsSolve, ncsp, cnew, gloss, nfdh1)
-      managerObject%numCallsVelocity = managerObject%numCallsVelocity + 1
 
-      call setBoundaryConditions (mechanismObject, itloop, jreorder, jlooplo, ilat, &
-               & ilong, ntspec, ncs, inewold, do_semiss_inchem, gloss, yemis)
 
-      call computeErrorFromCorrected1stDeriv (managerObject%num1stOEqnsSolve, ktloop, &
-               gloss, managerObject%currentTimeStep, cnewDerivatives, managerObject%accumulatedError)
 
-      call Backsub (managerObject%num1stOEqnsSolve, ktloop, ncsp, cc2, vdiag, gloss)
 
-      call sumAccumulatedError (managerObject, cnew, cnewDerivatives, dely, gloss, ktloop)
 
 
   500 continue
 
 
       if (managerObject%dcon == 0.0d0) then
-         print*, "dcon is 0"
          call calculateNewRmsError (managerObject, ktloop, dely, managerObject%correctorIterations)
          goto 100
 
@@ -560,6 +550,50 @@
       return
 
    end subroutine Smvgear
+
+      subroutine old300Block (ilat, ilong, itloop, cc2, cnew, cnewDerivatives, dely, do_semiss_inchem, gloss, inewold, jlooplo, jreorder, ktloop, managerObject, mechanismObject, ncs, ncsp, nfdh1, ntspec, vdiag, yemis)
+         use GmiManager_mod
+         use GmiMechanism_mod
+         implicit none
+
+#     include "smv2chem_par.h"
+         integer, intent(in) :: ilat
+         integer, intent(in) :: ilong
+         integer, intent(in) :: itloop
+         real*8, intent(inout) :: cc2(KBLOOP, 0:MXARRAY)
+         real*8, intent(inout) :: cnew(KBLOOP, MXGSAER)
+         real*8, intent(inout) :: cnewDerivatives(KBLOOP, MXGSAER*7)
+         real*8, intent(inout) :: dely(KBLOOP)
+         logical, intent(in) :: do_semiss_inchem
+         real*8 :: gloss(KBLOOP, MXGSAER)
+         integer, intent(in) :: inewold(MXGSAER, ICS)
+         integer, intent(in) :: jlooplo
+         integer, intent(in) :: jreorder(itloop)
+         integer, intent(in) :: ktloop
+         type(manager_type) :: managerObject
+         type(mechanism_type) :: mechanismObject
+         integer, intent(in) :: ncs
+         integer :: ncsp
+         integer, intent(out) :: nfdh1
+         integer, intent(in) :: ntspec(ICS)
+         real*8 :: vdiag(KBLOOP, MXGSAER)
+         real*8, intent(in) :: yemis(ilat*ilong, IGAS)
+
+         ! Evaluate the first derivative using corrected values of cnew.
+         call velocity (mechanismObject, managerObject%num1stOEqnsSolve, ncsp, cnew, gloss, nfdh1)
+         managerObject%numCallsVelocity = managerObject%numCallsVelocity + 1
+
+         call setBoundaryConditions (mechanismObject, itloop, jreorder, jlooplo, ilat, &
+                  ilong, ntspec, ncs, inewold, do_semiss_inchem, gloss, yemis)
+
+         call computeErrorFromCorrected1stDeriv (managerObject%num1stOEqnsSolve, ktloop, &
+                  gloss, managerObject%currentTimeStep, cnewDerivatives, managerObject%accumulatedError)
+
+         call Backsub (managerObject%num1stOEqnsSolve, ktloop, ncsp, cc2, vdiag, gloss)
+
+         call sumAccumulatedError (managerObject, cnew, cnewDerivatives, dely, gloss, ktloop)
+      end subroutine
+
 
 
 
