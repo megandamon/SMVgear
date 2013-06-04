@@ -41,6 +41,8 @@ module GmiManager_mod
    public :: resetTermsBeforeStartingOver
    public :: updateAndResetAfterSucessfulStep
    public :: storeAccumErrorAndSetTimeStepRatio
+   public :: estimateTimeStepRatioOneOrderHigher
+   public :: increaseOrderAndAddDerivativeTerm
 
    public :: LIMIT_EXCESSIVE_FAILURES
    public :: REORDER_GRID_CELLS, SOLVE_CHEMISTRY
@@ -93,7 +95,7 @@ module GmiManager_mod
        real*8  :: reltol1, reltol2, reltol3
        real*8  :: rmsError
        integer :: idoub ! records # of steps since the last change in step size or
-               ! order; it must be at least kstep = orderOfIntegrationMethod+1 before doubling is
+               ! order; it must be at least oneHigherOrderIntegration = orderOfIntegrationMethod+1 before doubling is
                ! allowed
        integer :: nslp ! last time step # during which "Pderiv" was called
        integer :: numExcessiveFailures ! counts # of times Smvgear starts over at order 1 because of
@@ -101,7 +103,7 @@ module GmiManager_mod
 
        integer :: oldOrderOfIntegrationMethod ! value of orderOfIntegrationMethod during last time step
        integer :: orderOfIntegrationMethod ! order of integration method; varies between 1 and MAXORD
-       integer :: kstep ! orderOfIntegrationMethod + 1
+       integer :: oneHigherOrderIntegration ! orderOfIntegrationMethod + 1
        real*8  :: hratio ! relative change in currentTimeStep*coeffsForIntegrationOrder(1) each change in step or order
                ! when Abs(hratio-1) > MAX_REL_CHANGE, reset jeval = 1 to call Pderiv
        real*8 :: integrationOrderCoeff1 ! value of coeffsForIntegrationOrder(orderOfIntegrationMethod,1)
@@ -129,6 +131,105 @@ module GmiManager_mod
     end type Manager_type
 
 contains
+
+
+
+!-----------------------------------------------------------------------------
+!
+! ROUTINE
+!   increaseOrderAndAddDerivativeTerm
+! DESCRIPTION
+! Increase the order and add a derivative term for the higher order.
+! Created by: Megan Rose Damon
+!-----------------------------------------------------------------------------
+      subroutine increaseOrderAndAddDerivativeTerm (this, cnewDerivatives, &
+                                    & ktloop)
+         implicit none
+
+         type(Manager_type) :: this
+         real*8, intent(out) :: cnewDerivatives(KBLOOP, MXGSAER*7)
+         integer, intent(in) :: ktloop
+
+         integer :: kloop, jspc
+         integer :: jg1, i1, i2
+         integer :: nqisc
+         real*8  :: consmult
+         real*8 :: oneHigherOrderIntegrationSave
+
+         oneHigherOrderIntegrationSave = this%oneHigherOrderIntegration
+         consmult   = coeffsForIntegrationOrder(this%orderOfIntegrationMethod,this%oneHigherOrderIntegration) / oneHigherOrderIntegrationSave
+         this%orderOfIntegrationMethod = this%oneHigherOrderIntegration
+         nqisc      = this%orderOfIntegrationMethod * this%num1stOEqnsSolve
+
+         do jspc = 1, this%num1stOEqnsSolve, 2
+
+            jg1 = jspc + 1
+            i1  = jspc + nqisc
+            i2  = jg1  + nqisc
+
+            do kloop = 1, ktloop
+              cnewDerivatives(kloop,i1) = this%accumulatedError(kloop,jspc) * consmult
+              cnewDerivatives(kloop,i2) = this%accumulatedError(kloop,jg1)  * consmult
+            end do
+
+          end do
+
+      end subroutine increaseOrderAndAddDerivativeTerm
+
+!-----------------------------------------------------------------------------
+!
+! ROUTINE
+!   estimateTimeStepRatioOneOrderHigher
+! DESCRIPTION
+! Estimate the time step ratio (timeStepRatioHigherOrder) at one order higher than
+! the current order.  If orderOfIntegrationMethod >= MAXORD, then we do not allow the
+! order to increase.
+! Created by: Megan Rose Damon
+!-----------------------------------------------------------------------------
+
+      subroutine estimateTimeStepRatioOneOrderHigher (this, maxOrder, ktloop, &
+                  errymax, dely, cest)
+         implicit none
+
+         type(Manager_type) :: this
+         integer, intent(in) :: maxOrder
+         integer, intent(in) :: ktloop
+         real*8, intent(inout) :: errymax
+         real*8, intent(inout) :: dely(KBLOOP)
+         real*8, intent(in) :: cest  (KBLOOP, MXGSAER)
+
+         integer :: kloop, jspc
+         real*8 :: delyMax
+
+         if (this%orderOfIntegrationMethod < maxOrder) then
+
+           do kloop = 1, ktloop
+             dely(kloop) = 0.0d0
+           end do
+
+           do jspc = 1, this%num1stOEqnsSolve
+             do kloop = 1, ktloop
+               errymax     = (this%accumulatedError(kloop,jspc) - cest(kloop,jspc)) *  &
+        &                    this%chold(kloop,jspc)
+               dely(kloop) = dely(kloop) + (errymax * errymax)
+             end do
+           end do
+
+           delyMax = 0.0d0
+           do kloop = 1, ktloop
+             if (dely(kloop) > delyMax) then
+               delyMax = dely(kloop)
+             end if
+           end do
+
+           this%timeStepRatioHigherOrder = 1.0d0 / &
+            ((this%conp3 * delyMax**enqq3(this%orderOfIntegrationMethod)) + 1.4d-6)
+
+         else
+           this%timeStepRatioHigherOrder = 0.0d0
+         end if
+
+      end subroutine estimateTimeStepRatioOneOrderHigher
 
 !-----------------------------------------------------------------------------
 !
@@ -441,7 +542,7 @@ contains
          real*8  :: asnqqj
 
          i1 = 1
-         do j = 2, this%kstep
+         do j = 2, this%oneHigherOrderIntegration
            i1 = i1 + this%num1stOEqnsSolve
            asnqqj = coeffsForIntegrationOrder(this%orderOfIntegrationMethod,j)
            do jspc = 1, this%num1stOEqnsSolve
@@ -579,7 +680,7 @@ contains
       rdelta = 1.0d0
       i1     = 1
 
-      do j = 2, this%kstep
+      do j = 2, this%oneHigherOrderIntegration
          rdelta = rdelta * this%timeStepRatio
          i1 = i1 + this%num1stOEqnsSolve
           do i = i1, i1 + (this%num1stOEqnsSolve-1)
@@ -703,7 +804,7 @@ contains
             dely(kloop) = 0.0d0
          end do
 
-         kstepisc = (this%kstep - 1) * this%num1stOEqnsSolve
+         kstepisc = (this%oneHigherOrderIntegration - 1) * this%num1stOEqnsSolve
 
          do kloop = 1, ktloop
             do jspc = 1, this%num1stOEqnsSolve
@@ -929,7 +1030,7 @@ contains
       real*8  :: edwn ! pertst^2*order for one order lower  than current order
 
       this%oldOrderOfIntegrationMethod = this%orderOfIntegrationMethod
-      this%kstep  = this%orderOfIntegrationMethod + 1
+      this%oneHigherOrderIntegration  = this%orderOfIntegrationMethod + 1
       this%hratio = this%hratio * coeffsForIntegrationOrder(this%orderOfIntegrationMethod,1) / this%integrationOrderCoeff1
       this%integrationOrderCoeff1   = coeffsForIntegrationOrder(this%orderOfIntegrationMethod,1)
       this%enqq   = coeffsForSelectingStepAndOrder(this%orderOfIntegrationMethod,1) * this%order
