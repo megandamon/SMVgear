@@ -599,7 +599,7 @@ contains
 
          integer :: i,i1,j,jb,jspc,kloop
 
-         if (prDiag) Write(*,*) "Computing predicted conc and derivatives using pascal triangle matrix"
+         !if (prDiag) Write(*,*) "Computing predicted conc and derivatives using pascal triangle matrix"
          i1 = this%nqqisc + 1
 
          do jb = 1, this%orderOfIntegrationMethod - 1

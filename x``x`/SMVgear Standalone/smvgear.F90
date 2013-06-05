@@ -261,6 +261,7 @@
 
          ! Restarting with new cell block.
          call old150CodeBlock(ilat, ilong, itloop, absoluteErrTolerance, cc2, cnew, cnewDerivatives, concAboveAbtolCount, corig, dely, do_semiss_inchem, errmx2, evaluatePredictor, explic, gloss, inewold, ireord, jlooplo, jphotrat, jreorder, kloop, ktloop, lunsmv, managerObject, MAX_REL_CHANGE, mechanismObject, ncs, ncsp, nfdh1, ntspec, numActiveReactants, numFinalMatrixPositions, pr_smv2, pratk1, prDiag, r1delt, vdiag, yemis)
+         call old200CodeBlock(ilat, ilong, itloop, absoluteErrTolerance, cc2, cnew, cnewDerivatives, concAboveAbtolCount, corig, dely, do_semiss_inchem, errmx2, evaluatePredictor, explic, gloss, inewold, ireord, jlooplo, jphotrat, jreorder, kloop, ktloop, lunsmv, managerObject, MAX_REL_CHANGE, mechanismObject, ncs, ncsp, nfdh1, ntspec, numActiveReactants, numFinalMatrixPositions, pr_smv2, pratk1, prDiag, r1delt, vdiag, yemis)
          goto 500
 
       else
@@ -556,8 +557,6 @@
          call setInitialOrder (managerObject, evaluatePredictor)
          call storeInitConcAndDerivatives(managerObject%num1stOEqnsSolve, ktloop, &
                               cnewDerivatives, cnew, managerObject%currentTimeStep, gloss)
-
-         call old200CodeBlock(ilat, ilong, itloop, absoluteErrTolerance, cc2, cnew, cnewDerivatives, concAboveAbtolCount, corig, dely, do_semiss_inchem, errmx2, evaluatePredictor, explic, gloss, inewold, ireord, jlooplo, jphotrat, jreorder, kloop, ktloop, lunsmv, managerObject, MAX_REL_CHANGE, mechanismObject, ncs, ncsp, nfdh1, ntspec, numActiveReactants, numFinalMatrixPositions, pr_smv2, pratk1, prDiag, r1delt, vdiag, yemis)
       end subroutine
 
 
