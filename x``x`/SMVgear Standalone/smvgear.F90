@@ -250,8 +250,9 @@
                               &  irmb, irmc, nfdh2, nfdh3, nfdrep, rrate)
       call resetGear (managerObject, ncsp, ncs, ifsun, hmaxnit)
 
-  500 continue
 
+
+do while (.true.)
 
       if (managerObject%dcon == 0.0d0) then
 
@@ -262,8 +263,8 @@
          ! Restarting with new cell block.
          call old150CodeBlock(ilat, ilong, itloop, absoluteErrTolerance, cc2, cnew, cnewDerivatives, concAboveAbtolCount, corig, dely, do_semiss_inchem, errmx2, evaluatePredictor, explic, gloss, inewold, ireord, jlooplo, jphotrat, jreorder, kloop, ktloop, lunsmv, managerObject, MAX_REL_CHANGE, mechanismObject, ncs, ncsp, nfdh1, ntspec, numActiveReactants, numFinalMatrixPositions, pr_smv2, pratk1, prDiag, r1delt, vdiag, yemis)
          call old200CodeBlock(ilat, ilong, itloop, absoluteErrTolerance, cc2, cnew, cnewDerivatives, concAboveAbtolCount, corig, dely, do_semiss_inchem, errmx2, evaluatePredictor, explic, gloss, inewold, ireord, jlooplo, jphotrat, jreorder, kloop, ktloop, lunsmv, managerObject, MAX_REL_CHANGE, mechanismObject, ncs, ncsp, nfdh1, ntspec, numActiveReactants, numFinalMatrixPositions, pr_smv2, pratk1, prDiag, r1delt, vdiag, yemis)
-         goto 500
 
+         cycle
       else
 
          call calculateNewRmsError (managerObject, ktloop, dely, managerObject%correctorIterations)
@@ -276,22 +277,23 @@
 
              ! re-eval first derivative (calls velocity)
              call old300Block(ilat, ilong, itloop, cc2, cnew, cnewDerivatives, dely, do_semiss_inchem, gloss, inewold, jlooplo, jreorder, ktloop, managerObject, mechanismObject, ncs, ncsp, nfdh1, ntspec, vdiag, yemis)
-             goto 500
+             cycle
 
             ! If the Jacobian (predictor?) matrix is more than one step old, update it,
             !  and try convergence again.
-           else if (evaluatePredictor == DO_NOT_EVAL_PREDICTOR) then
+           else if (evaluatePredictor == DO_NOT_EVAL_PREDICTOR) then ! This path doesn't seem to be taken by current testing
 
              managerObject%numFailOldJacobian = managerObject%numFailOldJacobian + 1
-             evaluatePredictor = 1
+             evaluatePredictor = EVAL_PREDICTOR
 
              ! calls corrector loop / re-evaluates predictor
             call old250Block(cc2, cnew, cnewDerivatives, evaluatePredictor, ktloop, managerObject, mechanismObject, ncsp, numFinalMatrixPositions, r1delt, vdiag)
             call old300Block(ilat, ilong, itloop, cc2, cnew, cnewDerivatives, dely, do_semiss_inchem, gloss, inewold, jlooplo, jreorder, ktloop, managerObject, mechanismObject, ncs, ncsp, nfdh1, ntspec, vdiag, yemis)
-            goto 500
 
+            cycle
            end if
 
+            ! This path doesn't seem to be taken by current testing
             ! if the Jacobian is current, then reduce the time step,
             ! reset the accumulated derivatives to their values before the failed step,
             ! and retry with the smaller step.
@@ -303,8 +305,8 @@
            call old200CodeBlock(ilat, ilong, itloop, absoluteErrTolerance, cc2, cnew, cnewDerivatives, concAboveAbtolCount, corig, dely, do_semiss_inchem, errmx2, evaluatePredictor, explic, gloss, inewold, ireord, jlooplo, jphotrat, jreorder, kloop, ktloop, lunsmv, managerObject, MAX_REL_CHANGE, mechanismObject, ncs, ncsp, nfdh1, ntspec, numActiveReactants, numFinalMatrixPositions, pr_smv2, pratk1, prDiag, r1delt, vdiag, yemis)
            call old250Block(cc2, cnew, cnewDerivatives, evaluatePredictor, ktloop, managerObject, mechanismObject, ncsp, numFinalMatrixPositions, r1delt, vdiag)
            call old300Block(ilat, ilong, itloop, cc2, cnew, cnewDerivatives, dely, do_semiss_inchem, gloss, inewold, jlooplo, jreorder, ktloop, managerObject, mechanismObject, ncs, ncsp, nfdh1, ntspec, vdiag, yemis)
-           goto 500
 
+           cycle
          end if
 
          ! The corrector iteration CONVERGED.
@@ -329,6 +331,7 @@
 
                call estimateTimeStepRatio (managerObject, ktloop, dely, cnewDerivatives)
 
+               ! this path isn't being executed by testing data
                !     If the last step was successful and timeStepRatio is small, keep the
                !     current step and order, and allow three successful steps before
                !     re-checking the time step and order.
@@ -339,7 +342,8 @@
                  call old200CodeBlock(ilat, ilong, itloop, absoluteErrTolerance, cc2, cnew, cnewDerivatives, concAboveAbtolCount, corig, dely, do_semiss_inchem, errmx2, evaluatePredictor, explic, gloss, inewold, ireord, jlooplo, jphotrat, jreorder, kloop, ktloop, lunsmv, managerObject, MAX_REL_CHANGE, mechanismObject, ncs, ncsp, nfdh1, ntspec, numActiveReactants, numFinalMatrixPositions, pr_smv2, pratk1, prDiag, r1delt, vdiag, yemis)
                  call old250Block(cc2, cnew, cnewDerivatives, evaluatePredictor, ktloop, managerObject, mechanismObject, ncsp, numFinalMatrixPositions, r1delt, vdiag)
                  call old300Block(ilat, ilong, itloop, cc2, cnew, cnewDerivatives, dely, do_semiss_inchem, gloss, inewold, jlooplo, jreorder, ktloop, managerObject, mechanismObject, ncs, ncsp, nfdh1, ntspec, vdiag, yemis)
-                 goto 500
+
+                  cycle
 
                ! If the maximum time step ratio is that of one order lower than
                ! the current order, decrease the order.  Do not minimize timeStepRatio
@@ -359,10 +363,11 @@
                call old200CodeBlock(ilat, ilong, itloop, absoluteErrTolerance, cc2, cnew, cnewDerivatives, concAboveAbtolCount, corig, dely, do_semiss_inchem, errmx2, evaluatePredictor, explic, gloss, inewold, ireord, jlooplo, jphotrat, jreorder, kloop, ktloop, lunsmv, managerObject, MAX_REL_CHANGE, mechanismObject, ncs, ncsp, nfdh1, ntspec, numActiveReactants, numFinalMatrixPositions, pr_smv2, pratk1, prDiag, r1delt, vdiag, yemis)
                call old250Block(cc2, cnew, cnewDerivatives, evaluatePredictor, ktloop, managerObject, mechanismObject, ncsp, numFinalMatrixPositions, r1delt, vdiag)
                call old300Block(ilat, ilong, itloop, cc2, cnew, cnewDerivatives, dely, do_semiss_inchem, gloss, inewold, jlooplo, jreorder, ktloop, managerObject, mechanismObject, ncs, ncsp, nfdh1, ntspec, vdiag, yemis)
-               goto 500
 
+               cycle
+
+            ! this path is not being executed with testing data
             ! if the first attempts fail, retry the step at timeStepDecreaseFraction
-
             else if (managerObject%numFailuresAfterVelocity <= 20) then
 
                managerObject%ifsuccess = 0
@@ -371,8 +376,10 @@
                call old200CodeBlock(ilat, ilong, itloop, absoluteErrTolerance, cc2, cnew, cnewDerivatives, concAboveAbtolCount, corig, dely, do_semiss_inchem, errmx2, evaluatePredictor, explic, gloss, inewold, ireord, jlooplo, jphotrat, jreorder, kloop, ktloop, lunsmv, managerObject, MAX_REL_CHANGE, mechanismObject, ncs, ncsp, nfdh1, ntspec, numActiveReactants, numFinalMatrixPositions, pr_smv2, pratk1, prDiag, r1delt, vdiag, yemis)
                call old250Block(cc2, cnew, cnewDerivatives, evaluatePredictor, ktloop, managerObject, mechanismObject, ncsp, numFinalMatrixPositions, r1delt, vdiag)
                call old300Block(ilat, ilong, itloop, cc2, cnew, cnewDerivatives, dely, do_semiss_inchem, gloss, inewold, jlooplo, jreorder, ktloop, managerObject, mechanismObject, ncs, ncsp, nfdh1, ntspec, vdiag, yemis)
-               goto 500
 
+               cycle
+
+            ! this path isn't being executed by testing data
             else
 
                call resetTermsBeforeStartingOver (managerObject, cnew, cnewDerivatives, &
@@ -388,7 +395,8 @@
                call old200CodeBlock(ilat, ilong, itloop, absoluteErrTolerance, cc2, cnew, cnewDerivatives, concAboveAbtolCount, corig, dely, do_semiss_inchem, errmx2, evaluatePredictor, explic, gloss, inewold, ireord, jlooplo, jphotrat, jreorder, kloop, ktloop, lunsmv, managerObject, MAX_REL_CHANGE, mechanismObject, ncs, ncsp, nfdh1, ntspec, numActiveReactants, numFinalMatrixPositions, pr_smv2, pratk1, prDiag, r1delt, vdiag, yemis)
                call old250Block(cc2, cnew, cnewDerivatives, evaluatePredictor, ktloop, managerObject, mechanismObject, ncsp, numFinalMatrixPositions, r1delt, vdiag)
                call old300Block(ilat, ilong, itloop, cc2, cnew, cnewDerivatives, dely, do_semiss_inchem, gloss, inewold, jlooplo, jreorder, ktloop, managerObject, mechanismObject, ncs, ncsp, nfdh1, ntspec, vdiag, yemis)
-               goto 500
+
+               cycle
             end if
 
          ! The accumulated error test did not fail
@@ -425,7 +433,8 @@
              call old200CodeBlock(ilat, ilong, itloop, absoluteErrTolerance, cc2, cnew, cnewDerivatives, concAboveAbtolCount, corig, dely, do_semiss_inchem, errmx2, evaluatePredictor, explic, gloss, inewold, ireord, jlooplo, jphotrat, jreorder, kloop, ktloop, lunsmv, managerObject, MAX_REL_CHANGE, mechanismObject, ncs, ncsp, nfdh1, ntspec, numActiveReactants, numFinalMatrixPositions, pr_smv2, pratk1, prDiag, r1delt, vdiag, yemis)
              call old250Block(cc2, cnew, cnewDerivatives, evaluatePredictor, ktloop, managerObject, mechanismObject, ncsp, numFinalMatrixPositions, r1delt, vdiag)
              call old300Block(ilat, ilong, itloop, cc2, cnew, cnewDerivatives, dely, do_semiss_inchem, gloss, inewold, jlooplo, jreorder, ktloop, managerObject, mechanismObject, ncs, ncsp, nfdh1, ntspec, vdiag, yemis)
-             goto 500
+
+             cycle
            end if
 
          end if
@@ -443,7 +452,6 @@
 
          call estimateTimeStepRatio (managerObject, ktloop, dely, cnewDerivatives)
 
-
          !     If the last step was successful and timeStepRatio is small, keep the
          !     current step and order, and allow three successful steps before
          !     re-checking the time step and order.
@@ -454,7 +462,8 @@
            call old200CodeBlock(ilat, ilong, itloop, absoluteErrTolerance, cc2, cnew, cnewDerivatives, concAboveAbtolCount, corig, dely, do_semiss_inchem, errmx2, evaluatePredictor, explic, gloss, inewold, ireord, jlooplo, jphotrat, jreorder, kloop, ktloop, lunsmv, managerObject, MAX_REL_CHANGE, mechanismObject, ncs, ncsp, nfdh1, ntspec, numActiveReactants, numFinalMatrixPositions, pr_smv2, pratk1, prDiag, r1delt, vdiag, yemis)
            call old250Block(cc2, cnew, cnewDerivatives, evaluatePredictor, ktloop, managerObject, mechanismObject, ncsp, numFinalMatrixPositions, r1delt, vdiag)
            call old300Block(ilat, ilong, itloop, cc2, cnew, cnewDerivatives, dely, do_semiss_inchem, gloss, inewold, jlooplo, jreorder, ktloop, managerObject, mechanismObject, ncs, ncsp, nfdh1, ntspec, vdiag, yemis)
-           goto 500
+
+            cycle
 
          ! If the maximum time step ratio is that of one order lower than
          ! the current order, decrease the order.  Do not minimize timeStepRatio
@@ -474,10 +483,9 @@
          call old200CodeBlock(ilat, ilong, itloop, absoluteErrTolerance, cc2, cnew, cnewDerivatives, concAboveAbtolCount, corig, dely, do_semiss_inchem, errmx2, evaluatePredictor, explic, gloss, inewold, ireord, jlooplo, jphotrat, jreorder, kloop, ktloop, lunsmv, managerObject, MAX_REL_CHANGE, mechanismObject, ncs, ncsp, nfdh1, ntspec, numActiveReactants, numFinalMatrixPositions, pr_smv2, pratk1, prDiag, r1delt, vdiag, yemis)
          call old250Block(cc2, cnew, cnewDerivatives, evaluatePredictor, ktloop, managerObject, mechanismObject, ncsp, numFinalMatrixPositions, r1delt, vdiag)
          call old300Block(ilat, ilong, itloop, cc2, cnew, cnewDerivatives, dely, do_semiss_inchem, gloss, inewold, jlooplo, jreorder, ktloop, managerObject, mechanismObject, ncs, ncsp, nfdh1, ntspec, vdiag, yemis)
-         goto 500
 
       end if
-
+end do
       return
 
    end subroutine Smvgear
@@ -615,7 +623,7 @@
 
 
                call calculateTimeStep (managerObject, evaluatePredictor, MAX_REL_CHANGE)
-               if (managerObject%currentTimeStep < HMIN) then
+               if (managerObject%currentTimeStep < HMIN) then !HMIN is a minimum acceptanbletime step
                  call tightenErrorTolerance (managerObject, pr_smv2, lunsmv, ncs)
 
                   !     Start time interval or re-enter after total failure.
@@ -677,7 +685,7 @@
 
             end if
          end do
-      end subroutine
+      end subroutine old200CodeBlock
 
 
       subroutine old250Block(cc2, cnew, cnewDerivatives, evaluatePredictor, ktloop, managerObject, mechanismObject, ncsp, numFinalMatrixPositions, r1delt, vdiag)
@@ -726,7 +734,7 @@
            call setConvergenceTerms (managerObject, MBETWEEN)
 
          end if
-      end subroutine
+      end subroutine old250Block
 
 
       subroutine old300Block (ilat, ilong, itloop, cc2, cnew, cnewDerivatives, dely, do_semiss_inchem, gloss, inewold, jlooplo, jreorder, ktloop, managerObject, mechanismObject, ncs, ncsp, nfdh1, ntspec, vdiag, yemis)
@@ -770,7 +778,7 @@
          call Backsub (managerObject%num1stOEqnsSolve, ktloop, ncsp, cc2, vdiag, gloss)
 
          call sumAccumulatedError (managerObject, cnew, cnewDerivatives, dely, gloss, ktloop)
-      end subroutine
+      end subroutine old300Block
 
 
 
