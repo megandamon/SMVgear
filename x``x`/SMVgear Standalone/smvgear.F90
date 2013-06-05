@@ -251,8 +251,8 @@
       call resetGear (managerObject, ncsp, ncs, ifsun, hmaxnit)
 
 
+   do while (.true.)
 
-do while (.true.)
 
       if (managerObject%dcon == 0.0d0) then
 
@@ -424,6 +424,7 @@ do while (.true.)
             !       Exit smvgear if a time interval has been completed.
            managerObject%timeRemainingInChemInterval = managerObject%chemTimeInterval - managerObject%elapsedTimeInChemInterval
            if (managerObject%timeRemainingInChemInterval <= 1.0d-06) return
+
 
            !       idoub counts the number of successful steps before re-testing the
            !       step-size and order: if idoub > 1, decrease idoub and go on to the next time step with
