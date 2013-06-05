@@ -250,28 +250,23 @@
                               &  irmb, irmc, nfdh2, nfdh3, nfdrep, rrate)
       call resetGear (managerObject, ncsp, ncs, ifsun, hmaxnit)
 
-      goto 500
-
- 100  continue
-
-      !     Start time interval or re-enter after total failure.
-      call startTimeInterval (managerObject, ncs)
-      call initConcentrationArray(ktloop, cnew, corig, managerObject)
-
-      !     Re-enter here if total failure or if restarting with new cell block.
-      call old150CodeBlock(ilat, ilong, itloop, absoluteErrTolerance, cc2, cnew, cnewDerivatives, concAboveAbtolCount, corig, dely, do_semiss_inchem, errmx2, evaluatePredictor, explic, gloss, inewold, ireord, jlooplo, jphotrat, jreorder, kloop, ktloop, lunsmv, managerObject, MAX_REL_CHANGE, mechanismObject, ncs, ncsp, nfdh1, ntspec, numActiveReactants, numFinalMatrixPositions, pr_smv2, pratk1, prDiag, r1delt, vdiag, yemis)
-
-
   500 continue
 
 
       if (managerObject%dcon == 0.0d0) then
-         call calculateNewRmsError (managerObject, ktloop, dely, managerObject%correctorIterations)
-         goto 100
+
+        call calculateNewRmsError (managerObject, ktloop, dely, managerObject%correctorIterations)
+        call startTimeInterval (managerObject, ncs)
+        call initConcentrationArray(ktloop, cnew, corig, managerObject)
+
+         ! Restarting with new cell block.
+         call old150CodeBlock(ilat, ilong, itloop, absoluteErrTolerance, cc2, cnew, cnewDerivatives, concAboveAbtolCount, corig, dely, do_semiss_inchem, errmx2, evaluatePredictor, explic, gloss, inewold, ireord, jlooplo, jphotrat, jreorder, kloop, ktloop, lunsmv, managerObject, MAX_REL_CHANGE, mechanismObject, ncs, ncsp, nfdh1, ntspec, numActiveReactants, numFinalMatrixPositions, pr_smv2, pratk1, prDiag, r1delt, vdiag, yemis)
+         goto 500
 
       else
 
          call calculateNewRmsError (managerObject, ktloop, dely, managerObject%correctorIterations)
+
          ! MRD: the comments below may be misleading.
          if (managerObject%dcon > 1.0d0) then ! NON-CONVERGENCE
 
@@ -389,6 +384,9 @@
 
                !GO TO 150
                call old150CodeBlock(ilat, ilong, itloop, absoluteErrTolerance, cc2, cnew, cnewDerivatives, concAboveAbtolCount, corig, dely, do_semiss_inchem, errmx2, evaluatePredictor, explic, gloss, inewold, ireord, jlooplo, jphotrat, jreorder, kloop, ktloop, lunsmv, managerObject, MAX_REL_CHANGE, mechanismObject, ncs, ncsp, nfdh1, ntspec, numActiveReactants, numFinalMatrixPositions, pr_smv2, pratk1, prDiag, r1delt, vdiag, yemis)
+               call old200CodeBlock(ilat, ilong, itloop, absoluteErrTolerance, cc2, cnew, cnewDerivatives, concAboveAbtolCount, corig, dely, do_semiss_inchem, errmx2, evaluatePredictor, explic, gloss, inewold, ireord, jlooplo, jphotrat, jreorder, kloop, ktloop, lunsmv, managerObject, MAX_REL_CHANGE, mechanismObject, ncs, ncsp, nfdh1, ntspec, numActiveReactants, numFinalMatrixPositions, pr_smv2, pratk1, prDiag, r1delt, vdiag, yemis)
+               call old250Block(cc2, cnew, cnewDerivatives, evaluatePredictor, ktloop, managerObject, mechanismObject, ncsp, numFinalMatrixPositions, r1delt, vdiag)
+               call old300Block(ilat, ilong, itloop, cc2, cnew, cnewDerivatives, dely, do_semiss_inchem, gloss, inewold, jlooplo, jreorder, ktloop, managerObject, mechanismObject, ncs, ncsp, nfdh1, ntspec, vdiag, yemis)
                goto 500
             end if
 
@@ -531,8 +529,6 @@
          real*8, intent(in) :: yemis(ilat*ilong, IGAS)
          call resetBeforeUpdate (managerObject)
 
-         print*, "in 150"
-
          !!DIR$ INLINE
          call updatePhotoDissRates  (mechanismObject, ktloop, numActiveReactants, ncs, ncsp, jphotrat, pratk1)
          !!DIR$ NOINLINE
@@ -613,7 +609,6 @@
          real*8, intent(in) :: yemis(ilat*ilong, IGAS)
 
          do while (.true.)
-               print*, "in 200"
 
                if (managerObject%orderOfIntegrationMethod /= managerObject%oldOrderOfIntegrationMethod) then
                   call updateCoefficients (managerObject)
@@ -623,9 +618,6 @@
                call calculateTimeStep (managerObject, evaluatePredictor, MAX_REL_CHANGE)
                if (managerObject%currentTimeStep < HMIN) then
                  call tightenErrorTolerance (managerObject, pr_smv2, lunsmv, ncs)
-
-                 ! in between the !---s, there was a go to 100
-         !---
 
                   !     Start time interval or re-enter after total failure.
                   call startTimeInterval (managerObject, ncs)
@@ -661,10 +653,8 @@
                   call setInitialOrder (managerObject, evaluatePredictor)
                   call storeInitConcAndDerivatives(managerObject%num1stOEqnsSolve, ktloop, &
                                     cnewDerivatives, cnew, managerObject%currentTimeStep, gloss)
-         ! ---
 
                else
-                  print*, "in else of 200 "
                   if (managerObject%timeStepRatio /= 1.0d0) then
                      call scaleDerivatives (managerObject, ktloop, cnewDerivatives)
                   end if
