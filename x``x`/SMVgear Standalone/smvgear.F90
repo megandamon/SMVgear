@@ -309,8 +309,6 @@
               call resetCnewDerivatives (managerObject, cnewDerivatives, numGridCellsInBlock)
               ! these three routines are called in succession several times below
               call doSubStep (ilat, ilong, numZones, absoluteErrTolerance, valuesDecomposedMatrix, cnew, cnewDerivatives, concAboveAbtolCount, corig, dely, do_semiss_inchem, stiffness, evaluatePredictor, explic, gloss, origJnewSpcNumber, reorder, jlooplo, jphotrat, jreorder, kloop, numGridCellsInBlock, lunsmv, managerObject, MAX_REL_CHANGE, mechanismObject, gasChemistryType, diurnalGasChemType, nfdh1, ntspec, numActiveReactants, numFinalMatrixPositions, pr_smv2, pratk1, prDiag, r1delt, vdiag, surfaceEmissions)
-              call correctorStep (valuesDecomposedMatrix, cnew, cnewDerivatives, evaluatePredictor, numGridCellsInBlock, managerObject, mechanismObject, diurnalGasChemType, numFinalMatrixPositions, r1delt, vdiag)
-              call advanceTimeStep (ilat, ilong, numZones, valuesDecomposedMatrix, cnew, cnewDerivatives, dely, do_semiss_inchem, gloss, origJnewSpcNumber, jlooplo, jreorder, numGridCellsInBlock, managerObject, mechanismObject, gasChemistryType, diurnalGasChemType, nfdh1, ntspec, vdiag, surfaceEmissions)
 
               !---!
               cycle
@@ -353,8 +351,6 @@
                     managerObject%numSuccessStepsBeforeReTest = 3
 
                     call doSubStep (ilat, ilong, numZones, absoluteErrTolerance, valuesDecomposedMatrix, cnew, cnewDerivatives, concAboveAbtolCount, corig, dely, do_semiss_inchem, stiffness, evaluatePredictor, explic, gloss, origJnewSpcNumber, reorder, jlooplo, jphotrat, jreorder, kloop, numGridCellsInBlock, lunsmv, managerObject, MAX_REL_CHANGE, mechanismObject, gasChemistryType, diurnalGasChemType, nfdh1, ntspec, numActiveReactants, numFinalMatrixPositions, pr_smv2, pratk1, prDiag, r1delt, vdiag, surfaceEmissions)
-                    call correctorStep (valuesDecomposedMatrix, cnew, cnewDerivatives, evaluatePredictor, numGridCellsInBlock, managerObject, mechanismObject, diurnalGasChemType, numFinalMatrixPositions, r1delt, vdiag)
-                    call advanceTimeStep (ilat, ilong, numZones, valuesDecomposedMatrix, cnew, cnewDerivatives, dely, do_semiss_inchem, gloss, origJnewSpcNumber, jlooplo, jreorder, numGridCellsInBlock, managerObject, mechanismObject, gasChemistryType, diurnalGasChemType, nfdh1, ntspec, vdiag, surfaceEmissions)
 
                     !---!
                     cycle
@@ -376,8 +372,6 @@
                   managerObject%numSuccessStepsBeforeReTest = managerObject%orderOfIntegrationMethod + 1
 
                   call doSubStep (ilat, ilong, numZones, absoluteErrTolerance, valuesDecomposedMatrix, cnew, cnewDerivatives, concAboveAbtolCount, corig, dely, do_semiss_inchem, stiffness, evaluatePredictor, explic, gloss, origJnewSpcNumber, reorder, jlooplo, jphotrat, jreorder, kloop, numGridCellsInBlock, lunsmv, managerObject, MAX_REL_CHANGE, mechanismObject, gasChemistryType, diurnalGasChemType, nfdh1, ntspec, numActiveReactants, numFinalMatrixPositions, pr_smv2, pratk1, prDiag, r1delt, vdiag, surfaceEmissions)
-                  call correctorStep (valuesDecomposedMatrix, cnew, cnewDerivatives, evaluatePredictor, numGridCellsInBlock, managerObject, mechanismObject, diurnalGasChemType, numFinalMatrixPositions, r1delt, vdiag)
-                  call advanceTimeStep (ilat, ilong, numZones, valuesDecomposedMatrix, cnew, cnewDerivatives, dely, do_semiss_inchem, gloss, origJnewSpcNumber, jlooplo, jreorder, numGridCellsInBlock, managerObject, mechanismObject, gasChemistryType, diurnalGasChemType, nfdh1, ntspec, vdiag, surfaceEmissions)
 
                   ! End duplicate code block
                   ! --------------------------------------------------------------------!
@@ -397,8 +391,6 @@
                   managerObject%timeStepRatio = timeStepDecreaseFraction
 
                   call doSubStep(ilat, ilong, numZones, absoluteErrTolerance, valuesDecomposedMatrix, cnew, cnewDerivatives, concAboveAbtolCount, corig, dely, do_semiss_inchem, stiffness, evaluatePredictor, explic, gloss, origJnewSpcNumber, reorder, jlooplo, jphotrat, jreorder, kloop, numGridCellsInBlock, lunsmv, managerObject, MAX_REL_CHANGE, mechanismObject, gasChemistryType, diurnalGasChemType, nfdh1, ntspec, numActiveReactants, numFinalMatrixPositions, pr_smv2, pratk1, prDiag, r1delt, vdiag, surfaceEmissions)
-                  call correctorStep(valuesDecomposedMatrix, cnew, cnewDerivatives, evaluatePredictor, numGridCellsInBlock, managerObject, mechanismObject, diurnalGasChemType, numFinalMatrixPositions, r1delt, vdiag)
-                  call advanceTimeStep(ilat, ilong, numZones, valuesDecomposedMatrix, cnew, cnewDerivatives, dely, do_semiss_inchem, gloss, origJnewSpcNumber, jlooplo, jreorder, numGridCellsInBlock, managerObject, mechanismObject, gasChemistryType, diurnalGasChemType, nfdh1, ntspec, vdiag, surfaceEmissions)
 
                   !---!
                   cycle
@@ -418,8 +410,6 @@
 
                   call initializeFirstTimeStep (ilat, ilong, numZones, absoluteErrTolerance, valuesDecomposedMatrix, cnew, cnewDerivatives, concAboveAbtolCount, corig, dely, do_semiss_inchem, stiffness, evaluatePredictor, explic, gloss, origJnewSpcNumber, reorder, jlooplo, jphotrat, jreorder, kloop, numGridCellsInBlock, lunsmv, managerObject, MAX_REL_CHANGE, mechanismObject, gasChemistryType, diurnalGasChemType, nfdh1, ntspec, numActiveReactants, numFinalMatrixPositions, pr_smv2, pratk1, prDiag, r1delt, vdiag, surfaceEmissions)
                   call doSubStep (ilat, ilong, numZones, absoluteErrTolerance, valuesDecomposedMatrix, cnew, cnewDerivatives, concAboveAbtolCount, corig, dely, do_semiss_inchem, stiffness, evaluatePredictor, explic, gloss, origJnewSpcNumber, reorder, jlooplo, jphotrat, jreorder, kloop, numGridCellsInBlock, lunsmv, managerObject, MAX_REL_CHANGE, mechanismObject, gasChemistryType, diurnalGasChemType, nfdh1, ntspec, numActiveReactants, numFinalMatrixPositions, pr_smv2, pratk1, prDiag, r1delt, vdiag, surfaceEmissions)
-                  call correctorStep (valuesDecomposedMatrix, cnew, cnewDerivatives, evaluatePredictor, numGridCellsInBlock, managerObject, mechanismObject, diurnalGasChemType, numFinalMatrixPositions, r1delt, vdiag)
-                  call advanceTimeStep (ilat, ilong, numZones, valuesDecomposedMatrix, cnew, cnewDerivatives, dely, do_semiss_inchem, gloss, origJnewSpcNumber, jlooplo, jreorder, numGridCellsInBlock, managerObject, mechanismObject, gasChemistryType, diurnalGasChemType, nfdh1, ntspec, vdiag, surfaceEmissions)
 
                   !---!
                   cycle
@@ -469,8 +459,6 @@
               if (managerObject%numSuccessStepsBeforeReTest > 1) then
                 call storeAccumErrorAndSetTimeStepRatio (managerObject, accumulatedErrorStorage, numGridCellsInBlock)
                 call doSubStep (ilat, ilong, numZones, absoluteErrTolerance, valuesDecomposedMatrix, cnew, cnewDerivatives, concAboveAbtolCount, corig, dely, do_semiss_inchem, stiffness, evaluatePredictor, explic, gloss, origJnewSpcNumber, reorder, jlooplo, jphotrat, jreorder, kloop, numGridCellsInBlock, lunsmv, managerObject, MAX_REL_CHANGE, mechanismObject, gasChemistryType, diurnalGasChemType, nfdh1, ntspec, numActiveReactants, numFinalMatrixPositions, pr_smv2, pratk1, prDiag, r1delt, vdiag, surfaceEmissions)
-                call correctorStep (valuesDecomposedMatrix, cnew, cnewDerivatives, evaluatePredictor, numGridCellsInBlock, managerObject, mechanismObject, diurnalGasChemType, numFinalMatrixPositions, r1delt, vdiag)
-                call advanceTimeStep (ilat, ilong, numZones, valuesDecomposedMatrix, cnew, cnewDerivatives, dely, do_semiss_inchem, gloss, origJnewSpcNumber, jlooplo, jreorder, numGridCellsInBlock, managerObject, mechanismObject, gasChemistryType, diurnalGasChemType, nfdh1, ntspec, vdiag, surfaceEmissions)
 
                 !---!
                 cycle
@@ -496,8 +484,6 @@
               managerObject%numSuccessStepsBeforeReTest = 3
 
               call doSubStep (ilat, ilong, numZones, absoluteErrTolerance, valuesDecomposedMatrix, cnew, cnewDerivatives, concAboveAbtolCount, corig, dely, do_semiss_inchem, stiffness, evaluatePredictor, explic, gloss, origJnewSpcNumber, reorder, jlooplo, jphotrat, jreorder, kloop, numGridCellsInBlock, lunsmv, managerObject, MAX_REL_CHANGE, mechanismObject, gasChemistryType, diurnalGasChemType, nfdh1, ntspec, numActiveReactants, numFinalMatrixPositions, pr_smv2, pratk1, prDiag, r1delt, vdiag, surfaceEmissions)
-              call correctorStep (valuesDecomposedMatrix, cnew, cnewDerivatives, evaluatePredictor, numGridCellsInBlock, managerObject, mechanismObject, diurnalGasChemType, numFinalMatrixPositions, r1delt, vdiag)
-              call advanceTimeStep (ilat, ilong, numZones, valuesDecomposedMatrix, cnew, cnewDerivatives, dely, do_semiss_inchem, gloss, origJnewSpcNumber, jlooplo, jreorder, numGridCellsInBlock, managerObject, mechanismObject, gasChemistryType, diurnalGasChemType, nfdh1, ntspec, vdiag, surfaceEmissions)
 
               !---!
               cycle
@@ -519,9 +505,6 @@
             managerObject%numSuccessStepsBeforeReTest = managerObject%orderOfIntegrationMethod + 1
 
             call doSubStep (ilat, ilong, numZones, absoluteErrTolerance, valuesDecomposedMatrix, cnew, cnewDerivatives, concAboveAbtolCount, corig, dely, do_semiss_inchem, stiffness, evaluatePredictor, explic, gloss, origJnewSpcNumber, reorder, jlooplo, jphotrat, jreorder, kloop, numGridCellsInBlock, lunsmv, managerObject, MAX_REL_CHANGE, mechanismObject, gasChemistryType, diurnalGasChemType, nfdh1, ntspec, numActiveReactants, numFinalMatrixPositions, pr_smv2, pratk1, prDiag, r1delt, vdiag, surfaceEmissions)
-            call correctorStep (valuesDecomposedMatrix, cnew, cnewDerivatives, evaluatePredictor, numGridCellsInBlock, managerObject, mechanismObject, diurnalGasChemType, numFinalMatrixPositions, r1delt, vdiag)
-            call advanceTimeStep (ilat, ilong, numZones, valuesDecomposedMatrix, cnew, cnewDerivatives, dely, do_semiss_inchem, gloss, origJnewSpcNumber, jlooplo, jreorder, numGridCellsInBlock, managerObject, mechanismObject, gasChemistryType, diurnalGasChemType, nfdh1, ntspec, vdiag, surfaceEmissions)
-
 
             ! End duplicate code block - MRD: there may need to be a cycle here!?
             ! --------------------------------------------------------------------!
