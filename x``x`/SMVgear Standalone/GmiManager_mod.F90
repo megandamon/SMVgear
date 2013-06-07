@@ -13,7 +13,7 @@ module GmiManager_mod
 
 #     include "smv2chem_par.h"
 
-   public :: Manager_type
+   public :: Manager
    public :: resetGear
    public :: startTimeInterval
    public :: calculateErrorTolerances
@@ -48,24 +48,30 @@ module GmiManager_mod
    public :: REORDER_GRID_CELLS, SOLVE_CHEMISTRY
    public :: EVAL_PREDICTOR, DO_NOT_EVAL_PREDICTOR, PREDICTOR_JUST_CALLED
    public :: STEP_SUCCESS, STEP_FAILURE
+   public :: MINIMUM_TIME_STEP, CONVERGENCE_THRESHOLD
+   public :: NUM_FAILURES_SMALL, NUM_FAILURES_LARGE
 
    integer, parameter :: REORDER_GRID_CELLS = 1
    integer, parameter :: SOLVE_CHEMISTRY = 2
    integer, parameter :: STEP_SUCCESS = 1
    integer, parameter :: STEP_FAILURE = 0
    integer, parameter :: LIMIT_EXCESSIVE_FAILURES = 100
+   integer, parameter :: NUM_FAILURES_SMALL = 6
+   integer, parameter :: NUM_FAILURES_LARGE = 20
 
    ! MRD: do these belong here?
    integer, parameter :: EVAL_PREDICTOR = 1
    integer, parameter :: DO_NOT_EVAL_PREDICTOR = 0
    integer, parameter :: PREDICTOR_JUST_CALLED = -1
 
+   real*8, parameter :: MINIMUM_TIME_STEP = 1.0d-06
+   real*8, parameter :: CONVERGENCE_THRESHOLD = 1.0d0
 
 
 ! MRD: add type bound procedures here
 ! can remove "_type"
 ! need a constructor
-   type Manager_type
+   type Manager
 
        ! private
        integer :: numErrTolDecreases
@@ -94,7 +100,7 @@ module GmiManager_mod
        real*8  :: told !stores last value of elapsedTimeInChemInterval in case current step fails
        real*8  :: reltol1, reltol2, reltol3
        real*8  :: rmsError
-       integer :: idoub ! records # of steps since the last change in step size or
+       integer :: numSuccessStepsBeforeReTest ! records # of steps since the last change in step size or
                ! order; it must be at least oneHigherOrderIntegration = orderOfIntegrationMethod+1 before doubling is
                ! allowed
        integer :: nslp ! last time step # during which "Pderiv" was called
@@ -128,7 +134,7 @@ module GmiManager_mod
       real*8 :: tolerance (KBLOOP)
       integer :: correctorIterations
       real*8  :: currentTimeStep
-    end type Manager_type
+    end type Manager
 
 contains
 
@@ -143,12 +149,12 @@ contains
 ! Created by: Megan Rose Damon
 !-----------------------------------------------------------------------------
       subroutine increaseOrderAndAddDerivativeTerm (this, cnewDerivatives, &
-                                    & ktloop)
+                                    & numGridCellsInBlock)
          implicit none
 
-         type(Manager_type) :: this
+         type(Manager) :: this
          real*8, intent(out) :: cnewDerivatives(KBLOOP, MXGSAER*7)
-         integer, intent(in) :: ktloop
+         integer, intent(in) :: numGridCellsInBlock
 
          integer :: kloop, jspc
          integer :: jg1, i1, i2
@@ -167,7 +173,7 @@ contains
             i1  = jspc + nqisc
             i2  = jg1  + nqisc
 
-            do kloop = 1, ktloop
+            do kloop = 1, numGridCellsInBlock
               cnewDerivatives(kloop,i1) = this%accumulatedError(kloop,jspc) * consmult
               cnewDerivatives(kloop,i2) = this%accumulatedError(kloop,jg1)  * consmult
             end do
@@ -187,13 +193,13 @@ contains
 ! Created by: Megan Rose Damon
 !-----------------------------------------------------------------------------
 
-      subroutine estimateTimeStepRatioOneOrderHigher (this, maxOrder, ktloop, &
+      subroutine estimateTimeStepRatioOneOrderHigher (this, maxOrder, numGridCellsInBlock, &
                   dely, cest)
          implicit none
 
-         type(Manager_type) :: this
+         type(Manager) :: this
          integer, intent(in) :: maxOrder
-         integer, intent(in) :: ktloop
+         integer, intent(in) :: numGridCellsInBlock
 
          real*8, intent(inout) :: dely(KBLOOP)
          real*8, intent(in) :: cest  (KBLOOP, MXGSAER)
@@ -204,12 +210,12 @@ contains
 
          if (this%orderOfIntegrationMethod < maxOrder) then
 
-           do kloop = 1, ktloop
+           do kloop = 1, numGridCellsInBlock
              dely(kloop) = 0.0d0
            end do
 
            do jspc = 1, this%num1stOEqnsSolve
-             do kloop = 1, ktloop
+             do kloop = 1, numGridCellsInBlock
                errymax     = (this%accumulatedError(kloop,jspc) - cest(kloop,jspc)) *  &
         &                    this%chold(kloop,jspc)
                dely(kloop) = dely(kloop) + (errymax * errymax)
@@ -217,7 +223,7 @@ contains
            end do
 
            delyMax = 0.0d0
-           do kloop = 1, ktloop
+           do kloop = 1, numGridCellsInBlock
              if (dely(kloop) > delyMax) then
                delyMax = dely(kloop)
              end if
@@ -237,27 +243,27 @@ contains
 ! ROUTINE
 !   storeAccumErrorAndStepTimeStepRatio
 ! DESCRIPTION
-! if idoub = 1, store the value of the error (accumulatedError) for the time
-! step prediction, which will occur when idoub = 0,
+! if numSuccessStepsBeforeReTest = 1, store the value of the error (accumulatedError) for the time
+! step prediction, which will occur when numSuccessStepsBeforeReTest = 0,
 ! but go on to the next step with the current step size and order
-! if idoub = 0, test the time step and order for a change.
+! if numSuccessStepsBeforeReTest = 0, test the time step and order for a change.
 ! Created by: Megan Rose Damon
 !-----------------------------------------------------------------------------
 
-      subroutine storeAccumErrorAndSetTimeStepRatio (this, accumErrorStorage, ktloop)
+      subroutine storeAccumErrorAndSetTimeStepRatio (this, accumErrorStorage, numGridCellsInBlock)
          implicit none
 
-         type(Manager_type) :: this
-         integer, intent(in) :: ktloop
+         type(Manager) :: this
+         integer, intent(in) :: numGridCellsInBlock
 
          real*8, intent(out) :: accumErrorStorage(KBLOOP, MXGSAER)
          integer :: jg1, jspc, kloop
 
-         this%idoub = this%idoub - 1
-         if (this%idoub == 1) then
+         this%numSuccessStepsBeforeReTest = this%numSuccessStepsBeforeReTest - 1
+         if (this%numSuccessStepsBeforeReTest == 1) then
            do jspc = 1, this%num1stOEqnsSolve, 2
              jg1 = jspc + 1
-             do kloop = 1, ktloop
+             do kloop = 1, numGridCellsInBlock
                accumErrorStorage(kloop,jspc) = this%accumulatedError(kloop,jspc)
                accumErrorStorage(kloop,jg1)  = this%accumulatedError(kloop,jg1)
              end do
@@ -277,20 +283,20 @@ contains
 ! derivatives, reset told, set ifsuccess = 1, increment numSuccessTdt,
 ! Created by: Megan Rose Damon
 !-----------------------------------------------------------------------------
-      subroutine updateAndResetAfterSucessfulStep (this, cnewDerivatives, ktloop)
+      subroutine updateAndResetAfterSucessfulStep (this, cnewDerivatives, numGridCellsInBlock)
 
          implicit none
 
-         type(manager_type) :: this
+         type(Manager) :: this
          real*8, intent(inout) :: cnewDerivatives(KBLOOP, MXGSAER*7)
-         integer, intent(in) :: ktloop
+         integer, intent(in) :: numGridCellsInBlock
 
          this%numFailuresAfterVelocity     = 0
          this%ifsuccess = STEP_SUCCESS
          this%numSuccessTdt    = this%numSuccessTdt + 1
          this%told      = this%elapsedTimeInChemInterval
 
-         call updateDerivatives(this, cnewDerivatives, ktloop)
+         call updateDerivatives(this, cnewDerivatives, numGridCellsInBlock)
 
       end subroutine updateAndResetAfterSucessfulStep
 
@@ -304,13 +310,13 @@ contains
 ! Created by: Megan Rose Damon
 !-----------------------------------------------------------------------------
       subroutine resetTermsBeforeStartingOver (this, cnew, cnewDerivatives, &
-                                          & ktloop, lunsmv, pr_smv2)
+                                          & numGridCellsInBlock, lunsmv, pr_smv2)
 
          implicit none
-         type(manager_type) :: this
+         type(Manager) :: this
          real*8, intent(out) :: cnew(KBLOOP, MXGSAER)
          real*8, intent(in) :: cnewDerivatives(KBLOOP, MXGSAER*7)
-         integer, intent(in) :: ktloop
+         integer, intent(in) :: numGridCellsInBlock
          integer, intent(in) :: lunsmv
          logical, intent(in) :: pr_smv2
 
@@ -320,10 +326,10 @@ contains
          this%timeStepRatio   = 1.0d0
          this%numFailuresAfterVelocity   = 0
          this%numExcessiveFailures = this%numExcessiveFailures + 1
-         this%idoub   = 5
+         this%numSuccessStepsBeforeReTest   = 5
 
          do jspc = 1, this%num1stOEqnsSolve
-           do kloop = 1, ktloop
+           do kloop = 1, numGridCellsInBlock
              cnew(kloop,jspc) = cnewDerivatives(kloop,jspc)
            end do
          end do
@@ -352,7 +358,7 @@ contains
 
       implicit none
 
-      type (Manager_type) :: this
+      type (Manager) :: this
       real*8, intent(in) :: maxFactorTimeStepIncrease
       real*8, intent(in) :: elapsedTime
       real*8, intent(in) :: timeStepRatio
@@ -376,7 +382,7 @@ contains
 
       implicit none
 
-      type (Manager_type) :: this
+      type (Manager) :: this
       this%elapsedTimeInChemInterval = this%told
       this%numFailErrorTest  = this%numFailErrorTest + 1
       this%numFailuresAfterVelocity  = this%numFailuresAfterVelocity  + 1
@@ -395,25 +401,25 @@ contains
 ! Created by: Megan Rose Damon
 !-----------------------------------------------------------------------------
    subroutine sumAccumulatedError(this, cnew, cnewDerivatives, dely, gloss, &
-                                 ktloop)
+                                 numGridCellsInBlock)
       implicit none
 
-      type (Manager_type) :: this
+      type (Manager) :: this
       real*8, intent(out) :: cnew(KBLOOP, MXGSAER)
       real*8, intent(in) :: cnewDerivatives(KBLOOP, MXGSAER*7)
       real*8, intent(inout) :: dely(KBLOOP)
       real*8, intent(in) :: gloss(KBLOOP, MXGSAER)
-      integer, intent(in) :: ktloop
+      integer, intent(in) :: numGridCellsInBlock
 
       integer :: i, kloop
       real*8 :: errymax
 
-      do kloop = 1, ktloop
+      do kloop = 1, numGridCellsInBlock
         dely(kloop) = 0.0d0
       end do
 
       do i = 1, this%num1stOEqnsSolve
-         do kloop = 1, ktloop
+         do kloop = 1, numGridCellsInBlock
             this%accumulatedError(kloop,i) = this%accumulatedError(kloop,i) + gloss(kloop,i) !*
             cnew(kloop,i)  = cnewDerivatives(kloop,i)  + (this%integrationOrderCoeff1 * this%accumulatedError(kloop,i))
             errymax        = gloss(kloop,i) * this%chold(kloop,i) !*
@@ -434,7 +440,7 @@ contains
    subroutine setConvergenceTerms(this, maxAllowableSteps)
       implicit none
 
-      type (Manager_type) :: this
+      type (Manager) :: this
       integer, intent(in) :: maxAllowableSteps
 
        this%hratio = 1.0d0
@@ -450,11 +456,11 @@ contains
 ! DESCRIPTION
 ! Created by: Megan Rose Damon
 !-----------------------------------------------------------------------------
-   subroutine initCorrector(this, ktloop, concentrationsNew, cnewDerivatives)
+   subroutine initCorrector(this, numGridCellsInBlock, concentrationsNew, cnewDerivatives)
       implicit none
 
-      type (Manager_type) :: this
-      integer, intent(in) :: ktloop
+      type (Manager) :: this
+      integer, intent(in) :: numGridCellsInBlock
       real*8, intent(out) :: concentrationsNew(KBLOOP, MXGSAER)
       real*8, intent(in) :: cnewDerivatives(KBLOOP, MXGSAER*7)
 
@@ -462,7 +468,7 @@ contains
 
       this%correctorIterations = 0
       do jspc = 1, this%num1stOEqnsSolve
-        do kloop = 1, ktloop
+        do kloop = 1, numGridCellsInBlock
           concentrationsNew (kloop,jspc) = cnewDerivatives(kloop,jspc)
           this%accumulatedError(kloop,jspc) = 0.0d0
         end do
@@ -480,7 +486,7 @@ contains
    subroutine setInitialOrder(this, evaluatePredictor)
       implicit none
 
-      type (Manager_type) :: this
+      type (Manager) :: this
       integer, intent(out) :: evaluatePredictor
 
       this%oldOrderOfIntegrationMethod = 0
@@ -499,26 +505,26 @@ contains
 ! Created by: Megan Rose Damon
 !-----------------------------------------------------------------------------
       subroutine determineInitialAbTol(this, concentrationsNew, concAboveAbtolCount, &
-                                       & ireord, ktloop, ncs, yabst)
+                                       & ireord, numGridCellsInBlock, ncs, yabst)
          implicit none
 
-         type (Manager_type) :: this
+         type (Manager) :: this
          real*8, intent(in) :: concentrationsNew(KBLOOP, MXGSAER)
          integer, intent(inout) :: concAboveAbtolCount(KBLOOP, 5)
          integer, intent(in) :: ireord
-         integer, intent(in) :: ktloop
+         integer, intent(in) :: numGridCellsInBlock
          integer, intent(in) :: ncs
          real*8, intent(inout) :: yabst(KBLOOP)
 
          integer :: kloop
 
          if (ireord == SOLVE_CHEMISTRY) then
-            call calcNewAbsoluteErrorTolerance (this, concentrationsNew, concAboveAbtolCount, ktloop, yabst, ncs)
-            do kloop = 1, ktloop
+            call calcNewAbsoluteErrorTolerance (this, concentrationsNew, concAboveAbtolCount, numGridCellsInBlock, yabst, ncs)
+            do kloop = 1, numGridCellsInBlock
                this%tolerance(kloop) = yabst(kloop) * this%reltol1
             end do
          else
-            do kloop = 1, ktloop
+            do kloop = 1, numGridCellsInBlock
                this%tolerance(kloop) = this%abtoler1
             end do
          end if
@@ -533,11 +539,11 @@ contains
 ! Created by: Megan Rose Damon
 !-----------------------------------------------------------------------------
 
-      subroutine updateDerivatives(this, cnewDerivatives, ktloop)
+      subroutine updateDerivatives(this, cnewDerivatives, numGridCellsInBlock)
          implicit none
-         type (Manager_type) :: this
+         type (Manager) :: this
          real*8, intent(inout) :: cnewDerivatives(KBLOOP, MXGSAER*7)
-         integer, intent(in) :: ktloop
+         integer, intent(in) :: numGridCellsInBlock
 
          integer :: i, i1, j, jspc, kloop
          real*8  :: asnqqj
@@ -548,19 +554,21 @@ contains
            asnqqj = coeffsForIntegrationOrder(this%orderOfIntegrationMethod,j)
            do jspc = 1, this%num1stOEqnsSolve
              i = jspc + i1 - 1
-             do kloop = 1, ktloop
+             do kloop = 1, numGridCellsInBlock
                cnewDerivatives(kloop,i) =  cnewDerivatives(kloop,i) + (asnqqj * this%accumulatedError(kloop,jspc))
              end do
            end do
          end do
       end subroutine updateDerivatives
 
-      subroutine resetCnewDerivatives(this, cnewDerivatives, ktloop)
+
+
+      subroutine resetCnewDerivatives(this, cnewDerivatives, numGridCellsInBlock)
          implicit none
 
-         type (Manager_type) :: this
+         type (Manager) :: this
          real*8, intent(inout) :: cnewDerivatives(KBLOOP, MXGSAER*7)
-         integer, intent(in) :: ktloop
+         integer, intent(in) :: numGridCellsInBlock
          integer :: i,i1,j,jb,kloop
 
          i1 = this%nqqisc + 1
@@ -569,7 +577,7 @@ contains
             i1 = i1 - this%num1stOEqnsSolve
             do i = i1, this%nqqisc
                j = i + this%num1stOEqnsSolve
-               do kloop = 1, ktloop
+               do kloop = 1, numGridCellsInBlock
                   cnewDerivatives(kloop,i) = cnewDerivatives(kloop,i) - cnewDerivatives(kloop,j)
              end do
            end do
@@ -587,14 +595,14 @@ contains
 !     previous values by the pascal triangle matrix.
 ! Created by: Megan Rose Damon
 !-----------------------------------------------------------------------------
-      subroutine predictConcAndDerivatives(this, conc, explic, ktloop, prDiag)
+      subroutine predictConcAndDerivatives(this, conc, explic, numGridCellsInBlock, prDiag)
 
          implicit none
 
-         type (Manager_type) :: this
+         type (Manager) :: this
          real*8, intent(inout) :: conc(KBLOOP, MXGSAER*7)
          real*8, intent(out) :: explic(KBLOOP, MXGSAER)
-         integer, intent(in) :: ktloop
+         integer, intent(in) :: numGridCellsInBlock
          logical, intent(in) :: prDiag
 
          integer :: i,i1,j,jb,jspc,kloop
@@ -606,7 +614,7 @@ contains
            i1 = i1 - this%num1stOEqnsSolve
            do i = i1,  this%nqqisc
              j = i + this%num1stOEqnsSolve
-             do kloop = 1, ktloop
+             do kloop = 1, numGridCellsInBlock
                conc(kloop,i)  = conc(kloop,i) + conc(kloop,j)
              end do
            end do
@@ -614,7 +622,7 @@ contains
 
          do jspc = 1,  this%num1stOEqnsSolve
            j = jspc + this%num1stOEqnsSolve
-           do kloop = 1, ktloop
+           do kloop = 1, numGridCellsInBlock
              conc  (kloop,jspc) = conc(kloop,jspc) + conc(kloop,j)
              explic(kloop,jspc) = conc(kloop,j)
            end do
@@ -623,7 +631,7 @@ contains
 
          do i = this%num1stOEqnsSolve + 1, this%nqqisc
            j = i + this%num1stOEqnsSolve
-           do kloop = 1, ktloop
+           do kloop = 1, numGridCellsInBlock
              conc(kloop,i) = conc(kloop,i) + conc(kloop,j)
            end do
          end do
@@ -638,15 +646,15 @@ contains
 ! DESCRIPTION
 ! Created by: Megan Rose Damon
 !-----------------------------------------------------------------------------
-   subroutine updateChold (this, ktloop, cnew, yabst)
-      type (Manager_type) :: this
-      integer, intent(in) :: ktloop
+   subroutine updateChold (this, numGridCellsInBlock, cnew, yabst)
+      type (Manager) :: this
+      integer, intent(in) :: numGridCellsInBlock
       real*8,  intent(in) :: cnew  (KBLOOP, MXGSAER)
       real*8, intent(in)  :: yabst (KBLOOP)
 
       integer :: kloop, jspc
 
-      do kloop = 1, ktloop
+      do kloop = 1, numGridCellsInBlock
        do jspc = 1, this%num1stOEqnsSolve
 
          this%chold(kloop,jspc) =  &
@@ -670,9 +678,9 @@ contains
 !   the jth derivative; j varies from 1 to orderOfIntegrationMethod; e.g., conc(jspc,2)
 !   stores currentTimeStep*y' (estimated)
 !-----------------------------------------------------------------------------
-   subroutine scaleDerivatives (this, ktloop, cnewDerivatives)
-      type (Manager_type) :: this
-      integer, intent(in)  :: ktloop
+   subroutine scaleDerivatives (this, numGridCellsInBlock, cnewDerivatives)
+      type (Manager) :: this
+      integer, intent(in)  :: numGridCellsInBlock
       real*8, intent(inout)  :: cnewDerivatives  (KBLOOP, MXGSAER*7)
 
       real*8  :: rdelta
@@ -685,7 +693,7 @@ contains
          rdelta = rdelta * this%timeStepRatio
          i1 = i1 + this%num1stOEqnsSolve
           do i = i1, i1 + (this%num1stOEqnsSolve-1)
-            do kloop = 1, ktloop
+            do kloop = 1, numGridCellsInBlock
               cnewDerivatives(kloop,i) = cnewDerivatives(kloop,i) * rdelta
             end do
           end do
@@ -700,11 +708,11 @@ contains
 ! DESCRIPTION
 ! Created by: Megan Rose Damon
 !-----------------------------------------------------------------------------
-   subroutine  calcNewAbsoluteErrorTolerance (this, cnew, concAboveAbtolCount, ktloop, yabst, ncs)
-      type (Manager_type) :: this
+   subroutine  calcNewAbsoluteErrorTolerance (this, cnew, concAboveAbtolCount, numGridCellsInBlock, yabst, ncs)
+      type (Manager) :: this
       real*8,  intent(in) :: cnew  (KBLOOP, MXGSAER)
       integer, intent(inout) :: concAboveAbtolCount(KBLOOP, 5)
-      integer, intent(in)  :: ktloop
+      integer, intent(in)  :: numGridCellsInBlock
       real*8, intent(out)  :: yabst (KBLOOP)
       integer, intent(in)  :: ncs
 
@@ -713,13 +721,13 @@ contains
       real*8  :: cnw
 
       do k = 1, 5
-          do kloop = 1, ktloop
+          do kloop = 1, numGridCellsInBlock
             concAboveAbtolCount(kloop,k) = 0
           end do
       end do
 
       do jspc = 1, this%num1stOEqnsSolve
-          do kloop = 1, ktloop
+          do kloop = 1, numGridCellsInBlock
             cnw = cnew(kloop,jspc)
             do k = 1, 5
                if (cnw > absoluteErrorTolerance(k,ncs)) then
@@ -730,7 +738,7 @@ contains
           end do
         end do
 
-        do kloop = 1, ktloop
+        do kloop = 1, numGridCellsInBlock
 
           k1 = concAboveAbtolCount(kloop,1)
           k2 = concAboveAbtolCount(kloop,2) + k1
@@ -763,7 +771,7 @@ contains
 ! Created by: Megan Rose Damon
 !-----------------------------------------------------------------------------
    subroutine resetBeforeUpdate (this)
-      type (Manager_type) :: this
+      type (Manager) :: this
 
       this%hratio    = 0.0d0
       this%integrationOrderCoeff1      = 1.0d0
@@ -779,13 +787,13 @@ contains
 ! DESCRIPTION
 ! Created by: Megan Rose Damon
 !-----------------------------------------------------------------------------
-   subroutine estimateTimeStepRatio (this, ktloop, dely, conc)
+   subroutine estimateTimeStepRatio (this, numGridCellsInBlock, dely, conc)
 
       ! ----------------------
       ! Argument declarations.
       ! ----------------------
-      type (Manager_type) :: this
-      integer, intent(in) :: ktloop
+      type (Manager) :: this
+      integer, intent(in) :: numGridCellsInBlock
       real*8, intent(inout)  :: dely  (KBLOOP)
       real*8, intent(in)  :: conc  (KBLOOP, MXGSAER*7)
 
@@ -801,13 +809,13 @@ contains
       !     the current order.  if orderOfIntegrationMethod = 1, then we cannot test a lower order
       if (this%orderOfIntegrationMethod > 1) then
 
-         do kloop = 1, ktloop
+         do kloop = 1, numGridCellsInBlock
             dely(kloop) = 0.0d0
          end do
 
          kstepisc = (this%oneHigherOrderIntegration - 1) * this%num1stOEqnsSolve
 
-         do kloop = 1, ktloop
+         do kloop = 1, numGridCellsInBlock
             do jspc = 1, this%num1stOEqnsSolve
                i = jspc + kstepisc
                errymax     = conc(kloop,i) * this%chold(kloop,jspc)
@@ -817,7 +825,7 @@ contains
 
         der1max = 0.0d0
 
-        do kloop = 1, ktloop
+        do kloop = 1, numGridCellsInBlock
           if (dely(kloop) > der1max) then
             der1max = dely(kloop)
           end if
@@ -843,23 +851,23 @@ contains
 !     Test the accumulated error from the convergence process.
 ! Created by: Megan Rose Damon
 !-----------------------------------------------------------------------------
-   subroutine testAccumulatedError (this, ktloop, dely)
+   subroutine testAccumulatedError (this, numGridCellsInBlock, dely)
 
       ! ----------------------
       ! Argument declarations.
       ! ----------------------
-      type (Manager_type) :: this
-      integer, intent(in) :: ktloop
+      type (Manager) :: this
+      integer, intent(in) :: numGridCellsInBlock
       real*8, intent(inout)  :: dely  (KBLOOP)
 
       integer:: jspc, kloop
       real*8  :: errymax
 
-      do kloop = 1, ktloop
+      do kloop = 1, numGridCellsInBlock
          dely(kloop) = 0.0d0
       end do
 
-      do kloop = 1, ktloop
+      do kloop = 1, numGridCellsInBlock
          do jspc = 1, this%num1stOEqnsSolve
             errymax     = this%accumulatedError(kloop,jspc) * this%chold(kloop,jspc)
             dely(kloop) = dely(kloop) + errymax * errymax
@@ -868,7 +876,7 @@ contains
 
       this%der2max = 0.0d0
 
-      do kloop = 1, ktloop
+      do kloop = 1, numGridCellsInBlock
          if (dely(kloop) > this%der2max) then
             this%der2max = dely(kloop)
          end if
@@ -886,12 +894,12 @@ contains
 !     iterate more.  If it is not, then the convergence test failed.
 ! Created by: Megan Rose Damon
 !-----------------------------------------------------------------------------
-   subroutine calculateNewRmsError (this, ktloop, dely, l3)
+   subroutine calculateNewRmsError (this, numGridCellsInBlock, dely, l3)
       ! ----------------------
       ! Argument declarations.
       ! ----------------------
-      type (Manager_type) :: this
-      integer, intent(in) :: ktloop
+      type (Manager) :: this
+      integer, intent(in) :: numGridCellsInBlock
       real*8, intent(in)  :: dely  (KBLOOP)
       integer, intent(inout) :: l3
 
@@ -902,7 +910,7 @@ contains
       this%der2max = 0.0d0
 
       ! make this a one line using maxval
-      do kloop = 1, ktloop
+      do kloop = 1, numGridCellsInBlock
         if (dely(kloop) > this%der2max) then
           this%der2max = dely(kloop)
         end if
@@ -945,7 +953,7 @@ contains
       ! ----------------------
       ! Argument declarations.
       ! ----------------------
-      type (Manager_type) :: this
+      type (Manager) :: this
 
       logical, intent(in)  :: pr_smv2
       integer, intent(in)  :: lunsmv
@@ -991,7 +999,7 @@ contains
       ! ----------------------
       ! Argument declarations.
       ! ----------------------
-      type (Manager_type) :: this
+      type (Manager) :: this
       integer, intent(out) :: jeval
       real*8, intent(in) :: maxRelChange
 
@@ -1029,7 +1037,7 @@ contains
       ! ----------------------
       ! Argument declarations.
       ! ----------------------
-      type (Manager_type) :: this
+      type (Manager) :: this
 
       real*8 :: eup ! pertst^2*order for one order higher than current order
       real*8  :: edwn ! pertst^2*order for one order lower  than current order
@@ -1060,17 +1068,17 @@ contains
 !       cnew + abtol / reltol
 ! This is a guess, later it will adapt
 ! Created by: Megan Rose Damon
-!   ktloop   : # of grid-cells in a grid-block
+!   numGridCellsInBlock   : # of grid-cells in a grid-block
 !   dely     : TBD
 !   ncs      : identifies gas chemistry type (1..NCSGAS)
 !-----------------------------------------------------------------------------
-   subroutine calcInitialTimeStepSize (this, ktloop, dely, ncs)
+   subroutine calcInitialTimeStepSize (this, numGridCellsInBlock, dely, ncs)
 
       ! ----------------------
       ! Argument declarations.
       ! ----------------------
-      type (Manager_type) :: this
-      integer, intent(in)  :: ktloop
+      type (Manager) :: this
+      integer, intent(in)  :: numGridCellsInBlock
       real*8, intent(in)  :: dely  (KBLOOP)
       integer, intent(in)  :: ncs ! ncs is argument to Smvgear
 
@@ -1079,7 +1087,7 @@ contains
       real*8  :: delt1
 
       rmstop = 0.0d0
-      do kloop = 1, ktloop
+      do kloop = 1, numGridCellsInBlock
          if (dely(kloop) > rmstop) rmstop = dely(kloop)
       end do
 
@@ -1097,20 +1105,20 @@ contains
 ! Use lowest absolute error tolerance when reordering.
 ! It is conceviable that there could be different norms or error criteria
 ! Created by: Megan Rose Damon
-!   ktloop   : # of grid-cells in a grid-block
+!   numGridCellsInBlock   : # of grid-cells in a grid-block
 !   cnew     : stores conc (y (estimated)) (molec/cm^3)
 !   gloss    : value of first derivatives on output from velocity; right-side
 !              of eqn on input to Backsub; error term (solution from Backsub)
 !              on output from Backsub
 !   dely     : TBD
 !-----------------------------------------------------------------------------
-   subroutine calculateErrorTolerances (this, ktloop, cnew, gloss, dely)
+   subroutine calculateErrorTolerances (this, numGridCellsInBlock, cnew, gloss, dely)
 
       ! ----------------------
       ! Argument declarations.
       ! ----------------------
-      type (Manager_type) :: this
-      integer, intent(in)  :: ktloop
+      type (Manager) :: this
+      integer, intent(in)  :: numGridCellsInBlock
       real*8, intent(in) :: cnew  (KBLOOP, MXGSAER)
       real*8, intent(in) :: gloss (KBLOOP, MXGSAER)
       real*8, intent(inout)  :: dely  (KBLOOP)
@@ -1119,7 +1127,11 @@ contains
       integer :: jspc
       real*8  :: errymax
 
-      do kloop = 1, ktloop
+      do kloop = 1, numGridCellsInBlock
+           dely(kloop) = 0.0d0
+      end do
+
+      do kloop = 1, numGridCellsInBlock
          do jspc = 1, this%num1stOEqnsSolve
             errymax     = gloss(kloop,jspc) / (cnew(kloop,jspc) + this%tolerance(kloop))
             dely(kloop) = dely(kloop) + (errymax * errymax)
@@ -1143,15 +1155,16 @@ contains
       ! ----------------------
       ! Argument declarations.
       ! ----------------------
-      type (Manager_type) :: this
+      type (Manager) :: this
       integer, intent(in)  :: ncs ! ncs is argument to Smvgear
 
-      this%idoub     = 2
+      this%numSuccessStepsBeforeReTest     = 2
       this%nslp      = MBETWEEN
       this%numExcessiveFailures   = 0
       this%elapsedTimeInChemInterval    = 0.0d0
       this%told      = 0.0d0
       this%timeRemainingInChemInterval = this%chemTimeInterval
+
 
       this%reltol1   = this%failureFraction * this%initialError_inv
 
@@ -1183,7 +1196,7 @@ contains
          ! ----------------------
          ! Argument declarations.
          ! ----------------------
-         type (Manager_type) :: this
+         type (Manager) :: this
          integer, intent(out) :: ncsp
          integer, intent(in)  :: ncs ! ncs is argument to Smvgear
          integer, intent(in)  :: ifsun ! ifsun is an argument to Smvgear
@@ -1210,6 +1223,7 @@ contains
 
          ! MRD: derived from common bloc
          this%chemTimeInterval = timeintv(ncs)
+         this%timeRemainingInChemInterval = this%chemTimeInterval
 
          ! MRD: ICS is from common block
          ncsp      = (ifsun - 1) * ICS + ncs

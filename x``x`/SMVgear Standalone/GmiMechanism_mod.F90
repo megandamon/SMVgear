@@ -10,22 +10,21 @@ module GmiMechanism_mod
    public :: velocity
    public :: calculateTermOfJacobian
    public :: updatePhotoDissRates
-   public :: Mechanism_type
+   public :: Mechanism
 
 
-! MRD: add type bound procedures here
-! can remove "_type"
-! need a constructor
+! MRD: add type bound procedures here, and a constructor
 ! there will be a generic mechanism and generic matrix module
 ! but right now we have a sparse matrix linear system (not general)
 ! this is a GMI-specific verison of sparse matrix
-   type Mechanism_type
+   type Mechanism
 
        ! MRD: Tell Tom that these are all the same; could be in a table per Kareem
        integer :: numRxns3Drep !numRxns3 + # of rxns with
                      ! two active reactants that are not
                        ! followed by a rxn with the same reactant
        !integer :: numActiveReactants ! CHECK WITH TOM
+
 		 !K: These arrays should be removed as they're in ChemTable now
        integer :: speciesNumberA    (NMTRATE)
        integer :: speciesNumberB    (NMTRATE)
@@ -41,7 +40,7 @@ module GmiMechanism_mod
                               !                         cm^3 #-1 s^-1 (?)
                               ! rates with 3 reactants:  l^2-h2o m-2 s-1  or
                               !                         cm^6 #-2 s-1 (?)
-    end type Mechanism_type
+    end type Mechanism
 
 contains
 
@@ -57,7 +56,7 @@ contains
          !     ----------------------
          !     Argument declarations.
          !     ----------------------
-         type (Mechanism_type) :: this
+         type (Mechanism) :: this
          integer, intent(in)  :: irma    (NMTRATE)
          integer, intent(in)  :: irmb    (NMTRATE)
          integer, intent(in)  :: irmc    (NMTRATE)
@@ -107,7 +106,7 @@ contains
          !     ----------------------
          !     Argument declarations.
          !     ----------------------
-         type (Mechanism_type) :: this
+         type (Mechanism) :: this
          integer, intent(in)  :: itloop
          integer, intent(in)  :: jreorder(itloop)
          integer, intent(in)  :: jlooplo
@@ -184,7 +183,7 @@ contains
 		use ChemTable_mod
 		implicit none
 
-      type (Mechanism_type) :: this
+      type (Mechanism) :: this
       integer, intent(in)  :: ischan ! derived from common block
       integer, intent(in)  :: ncsp   ! derived from common block
       real*8,  intent(in)  :: cx (KBLOOP, MXGSAER)
@@ -319,7 +318,7 @@ contains
 !     ----------------------
 !     Argument declarations.
 !     ----------------------
-         type (Mechanism_type) :: this
+         type (Mechanism) :: this
          real*8,  intent(in)  :: concentrationsNew  (KBLOOP, MXGSAER)
 			!K: This should not be called reactionRates, they're derivatives of rxn-rates
          real*8,  intent(out) :: reactionRates (KBLOOP, NMTRATE, 3)
@@ -406,7 +405,7 @@ contains
 !     ----------------------
 !     Argument declarations.
 !     ----------------------
-      type (Mechanism_type) :: this
+      type (Mechanism) :: this
       integer, intent(in)  :: ktloop
       integer, intent(in)  :: numActiveReactants
       integer, intent(in)  :: ncs
