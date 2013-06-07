@@ -62,6 +62,7 @@ module GmiManager_mod
    ! MRD: do these belong here?
    integer, parameter :: EVAL_PREDICTOR = 1
    integer, parameter :: DO_NOT_EVAL_PREDICTOR = 0
+
    integer, parameter :: PREDICTOR_JUST_CALLED = -1
 
    real*8, parameter :: MINIMUM_TIME_STEP = 1.0d-06
@@ -127,7 +128,7 @@ module GmiManager_mod
        real*8  :: dcon
        real*8  :: accumulatedError (KBLOOP, MXGSAER)! an array of length num1stOEqnsSolve, used for the accumulated corrections;
                ! on a successful return; accumulatedError(kloop,i) contains the estimated one step local error in cnew
-      real*8  :: chold (KBLOOP, MXGSAER) ! 1 / (reltol * cnew + abtol); multiply chold by local errors in different error tests
+       real*8  :: chold (KBLOOP, MXGSAER) ! 1 / (reltol * cnew + abtol); multiply chold by local errors in different error tests
       real*8  :: timeStepRatioLowerOrder ! time step ratio at one order lower  than current order
       real*8  :: timeStepRatioHigherOrder ! time step ratio at one order higher than current order
       integer :: ifsuccess ! identifies whether step is successful (=1) or not (=0)

@@ -8,7 +8,6 @@ module GmiMechanism_mod
    public :: initializeMechanism
    public :: setBoundaryConditions
    public :: velocity
-   public :: calculateTermOfJacobian
    public :: updatePhotoDissRates
    public :: Mechanism
 
@@ -285,89 +284,6 @@ contains
 		end subroutine velocity
 
 
-!-----------------------------------------------------------------------------
-!
-! ROUTINE
-!   calculateJacobian
-!
-! DESCRIPTION
-!    This is calculating the Jacobian of the flow (jacobian) or
-!    Partial derivatives for rates with three active loss terms.
-!
-!
-! ARGUMENTS
-!   numRxns1           : numRxns2 + # of rxns with one   active reactant
-!   numRxns2           : numRxns3 + # of rxns with two   active reactants
-!   numRxns3           :         # of rxns with three active reactants
-!   speciesNumberA,B,C : spc # of each reactant; locates reordered active spc #s
-!   numGridCellsInBlock   : # of grid-cells in a grid-block
-!   rateConstants      : rate constants
-!   concentrationsNew  : stores conc (y (estimated)) (molec/cm^3)
-!   reactionRates :
-!
-! NOTES:
-    ! Should the Jacobian change within time step?
-    ! Chemical time step is small, and predictor takes multiple steps.
-    ! rateConstants (reaction rates stay the same throughout the simulation)
-    ! if chem_tdt changes or if the order changes, the Jacobian will change
-!-----------------------------------------------------------------------------
-      subroutine calculateTermOfJacobian (this, concentrationsNew, reactionRates)
-
-         implicit none
-
-!     ----------------------
-!     Argument declarations.
-!     ----------------------
-         type (Mechanism) :: this
-         real*8,  intent(in)  :: concentrationsNew  (KBLOOP, MXGSAER)
-			!K: This should not be called reactionRates, they're derivatives of rxn-rates
-         real*8,  intent(out) :: reactionRates (KBLOOP, NMTRATE, 3)
-
-!     ----------------------
-!     Variable declarations.
-!     ----------------------
-        integer :: nkn, block
-        integer :: ja, jb, jc
-
-!    Partial derivatives for rates with three active loss terms.
-         do nkn = 1, this%numRxns3
-            ja = this%speciesNumberA(nkn)
-            jb = this%speciesNumberB(nkn)
-            jc = this%speciesNumberC(nkn)
-
-            do block = 1, this%numGridCellsInBlock
-               reactionRates(block,nkn,1) = this%rateConstants(block,nkn) * concentrationsNew(block,jb) * concentrationsNew(block,jc)
-               reactionRates(block,nkn,2) = this%rateConstants(block,nkn) * concentrationsNew(block,ja) * concentrationsNew(block,jc)
-               reactionRates(block,nkn,3) = this%rateConstants(block,nkn) * concentrationsNew(block,ja) * concentrationsNew(block,jb)
-            end do
-
-          end do
-
-!     ---------------------------------------------------------
-!     Partial derivatives for rates with two active loss terms.
-!     ---------------------------------------------------------
-         do nkn = this%numRxns3+1, this%numRxns2
-
-            ja = this%speciesNumberA(nkn)
-            jb = this%speciesNumberB(nkn)
-
-            do block = 1, this%numGridCellsInBlock
-               reactionRates(block,nkn,1) = this%rateConstants(block,nkn) * concentrationsNew(block,jb)
-               reactionRates(block,nkn,2) = this%rateConstants(block,nkn) * concentrationsNew(block,ja)
-            end do
-
-         end do
-
-!     --------------------------------------------------------
-!     Partial derivatives for rates with one active loss term.
-!     --------------------------------------------------------
-         do nkn = this%numRxns2+1, this%numRxns1
-            do block = 1, this%numGridCellsInBlock
-               reactionRates(block,nkn,1) = this%rateConstants(block,nkn)
-            end do
-         end do
-
-      end subroutine calculateTermOfJacobian
 
 !-----------------------------------------------------------------------------
 !

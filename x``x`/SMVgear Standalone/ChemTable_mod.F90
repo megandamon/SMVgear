@@ -1,3 +1,4 @@
+! this represents one chemistry type/table of reactions
 module ChemTable_mod
 	implicit none
 !#include "smv2chem_par.h"	

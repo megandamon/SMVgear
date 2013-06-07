@@ -448,7 +448,6 @@ contains
 
       use Smv2Chem2_mod
 		use ChemTable_mod
-		use GmiMechanism_mod
 
       implicit none
 

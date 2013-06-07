@@ -220,8 +220,6 @@
       integer, intent(out) :: nfdh1
       logical, intent(in)  :: prDiag
 
-
-
       ! Variable declarations.
       integer :: diurnalGasChemType  ! gasChemistryType       => for daytime   gas chemistry
                        ! gasChemistryType + ICS => for nighttime gas chemistry
@@ -262,15 +260,13 @@
       call resetGear (managerObject, diurnalGasChemType, gasChemistryType, ifsun, maxTimeStepNight)
 
 
-
-
-      numLoopCycles = -1
+      numLoopCycles = 0
       do while (managerObject%timeRemainingInChemInterval > MINIMUM_TIME_STEP)
          numLoopCycles = numLoopCycles + 1
 
          call calculateNewRmsError (managerObject, numGridCellsInBlock, dely, managerObject%correctorIterations)
 
-         if (numLoopCycles == 0) then ! Restarting with new cell block.
+         if (numLoopCycles == 1) then ! Restarting with new cell block on first iteration; this could be moved outside the loop
 
            call startTimeInterval (managerObject, gasChemistryType)
            call initConcentrationArray (numGridCellsInBlock, cnew, corig, managerObject)
@@ -707,7 +703,7 @@
                end if
 
                call predictConcAndDerivatives (managerObject, cnewDerivatives, explic, numGridCellsInBlock, prDiag)
-               call correctorStep(valuesDecomposedMatrix, cnew, cnewDerivatives, evaluatePredictor, numGridCellsInBlock, managerObject, mechanismObject, diurnalGasChemType, numFinalMatrixPositions, r1delt, vdiag)
+               call correctorStep (valuesDecomposedMatrix, cnew, cnewDerivatives, evaluatePredictor, numGridCellsInBlock, managerObject, mechanismObject, diurnalGasChemType, numFinalMatrixPositions, r1delt, vdiag)
                call advanceTimeStep(ilat, ilong, numZones, valuesDecomposedMatrix, cnew, cnewDerivatives, dely, do_semiss_inchem, gloss, origJnewSpcNumber, jlooplo, jreorder, numGridCellsInBlock, managerObject, mechanismObject, gasChemistryType, diurnalGasChemType, nfdh1, ntspec, vdiag, surfaceEmissions)
 
                exit
